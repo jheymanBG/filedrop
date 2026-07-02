@@ -1,0 +1,92 @@
+﻿@model FileDrop.Web.Models.AdminDashboardViewModel
+@{
+    string Size(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        int unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {units[unit]}";
+    }
+}
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a class="active" href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a><a href="/Admin/Audit">Audit Log</a><a href="/Admin/Health">Health</a><a href="/Admin/Settings">Settings</a><a href="/Admin/Deployment">Deployment</a><a href="/Admin/Reports">Reports</a><a href="/Admin/Email">Email Test</a><a href="/Admin/Branding">Branding</a><a href="/Admin/Entra">Entra Readiness</a><a href="/Admin/Production">Production</a>
+        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Dashboard</h1>@if (TempData["Message"] is not null) { <div class="notice">@TempData["Message"]</div> }<form method="post" action="/Admin/CleanupExpired" class="cleanup-form"><input type="number" name="olderThanDays" value="0" min="0" max="365" /><button type="submit" class="warning">Delete Expired Transfers</button></form>
+
+        <div class="metric-grid">
+            <div class="metric"><span>Active Transfers</span><strong>@Model.ActiveTransfers</strong></div>
+            <div class="metric"><span>Expired Transfers</span><strong>@Model.ExpiredTransfers</strong></div>
+            <div class="metric"><span>Total Files</span><strong>@Model.TotalFiles</strong></div>
+            <div class="metric"><span>Storage Used</span><strong>@Size(Model.TotalStorageBytes)</strong></div>
+            <div class="metric"><span>Total Downloads</span><strong>@Model.DownloadsTotal</strong></div>
+            <div class="metric"><span>Total Transfers</span><strong>@Model.TotalTransfers</strong></div>
+        </div>
+
+        <div class="admin-card">
+            <div class="card-title-row">
+                <h2>Recent Transfers</h2>
+                <a href="/Admin/Transfers">View all</a>
+            </div>
+            <table class="admin-table">
+                <thead>
+                    <tr><th>Subject</th><th>Sender</th><th>Recipient</th><th>Files</th><th>Size</th><th>Expires</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                @foreach (var t in Model.RecentTransfers)
+                {
+                    <tr>
+                        <td><a href="/Admin/Transfer/@t.TransferId">@(string.IsNullOrWhiteSpace(t.Subject) ? "(No subject)" : t.Subject)</a></td>
+                        <td>@t.SenderEmail</td>
+                        <td>@t.RecipientEmail</td>
+                        <td>@t.FileCount</td>
+                        <td>@Size(t.TotalBytes)</td>
+                        <td>@t.ExpirationDate.ToLocalTime()</td>
+                        <td><span class="badge @t.Status.ToLowerInvariant()">@t.Status</span></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="admin-card">
+            <h2>Largest Files</h2>
+            <table class="admin-table">
+                <thead>
+                    <tr><th>File</th><th>Recipient</th><th>Size</th><th>Uploaded</th></tr>
+                </thead>
+                <tbody>
+                @foreach (var f in Model.LargestFiles)
+                {
+                    <tr>
+                        <td>@f.OriginalFileName</td>
+                        <td>@f.RecipientEmail</td>
+                        <td>@Size(f.FileSizeBytes)</td>
+                        <td>@f.UploadedDate.ToLocalTime()</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+
+
+
+
+
+
+
+

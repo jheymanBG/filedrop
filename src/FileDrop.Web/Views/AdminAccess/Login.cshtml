@@ -1,0 +1,25 @@
+﻿<section class="card admin-login-card">
+    <h1>Administrator Access</h1>
+    <p class="muted">Enter the temporary FileDrop admin access key.</p>
+
+    <form method="post" action="/Admin/Login">
+        <input type="hidden" name="returnUrl" value="@ViewBag.ReturnUrl" />
+
+        <label for="key">Admin Access Key</label>
+        <input id="key" name="key" type="password" autocomplete="current-password" autofocus />
+
+        <button type="submit">Continue</button>
+    </form>
+
+    @if (!ViewData.ModelState.IsValid)
+    {
+        <div class="validation">
+            @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+            {
+                <div>@error.ErrorMessage</div>
+            }
+        </div>
+    }
+
+    <p class="muted small-note">This temporary gate can be replaced with Microsoft Entra roles after tenant admin consent is granted.</p>
+</section>

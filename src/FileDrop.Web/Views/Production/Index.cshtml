@@ -1,0 +1,57 @@
+﻿@model FileDrop.Web.Models.ProductionReadinessViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a href="/Admin/Entra">Entra Readiness</a>
+        <a class="active" href="/Admin/Production">Production</a>
+        <a href="/">User Home</a>
+        <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Production Readiness</h1>
+
+        <div class="metric-grid">
+            <div class="metric"><span>Complete</span><strong>@Model.CompleteCount / @Model.TotalCount</strong></div>
+            <div class="metric"><span>Progress</span><strong>@Model.PercentComplete%</strong></div>
+            <div class="metric"><span>Status</span><strong class="@(Model.PercentComplete >= 100 ? "ok-text" : "bad-text")">@(Model.PercentComplete >= 100 ? "Ready" : "In Progress")</strong></div>
+        </div>
+
+        <div class="admin-card">
+            <table class="admin-table production-table">
+                <thead>
+                    <tr><th>Done</th><th>Category</th><th>Item</th><th>Notes</th><th>Modified</th><th></th></tr>
+                </thead>
+                <tbody>
+                @foreach (var item in Model.Items)
+                {
+                    <tr>
+                        <form method="post" action="/Admin/Production/Update">
+                            <input type="hidden" name="checklistId" value="@item.ChecklistId" />
+                            <td>
+                                <input type="checkbox" name="isComplete" value="true" @(item.IsComplete ? "checked" : "") />
+                                <input type="hidden" name="isComplete" value="false" />
+                            </td>
+                            <td><strong>@item.Category</strong></td>
+                            <td>@item.Item</td>
+                            <td><input name="notes" value="@item.Notes" /></td>
+                            <td>@item.ModifiedDate.ToLocalTime()</td>
+                            <td><button type="submit">Save</button></td>
+                        </form>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>

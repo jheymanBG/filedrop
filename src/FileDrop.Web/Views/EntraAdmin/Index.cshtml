@@ -1,0 +1,86 @@
+﻿@model FileDrop.Web.Models.EntraReadinessViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a class="active" href="/Admin/Entra">Entra Readiness</a>
+        <a href="/">User Home</a>
+        <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Microsoft Entra Readiness</h1>
+
+        @if (TempData["Message"] is not null)
+        {
+            <div class="notice">@TempData["Message"]</div>
+        }
+
+        <div class="metric-grid">
+            <div class="metric">
+                <span>Admin Consent</span>
+                <strong class="@(Model.AdminConsentGranted ? "ok-text" : "bad-text")">@(Model.AdminConsentGranted ? "Granted" : "Pending")</strong>
+            </div>
+            <div class="metric">
+                <span>Upload Login Requirement</span>
+                <strong>@(Model.RequireMicrosoftLoginForUploads ? "Microsoft Login" : "Temporary Local")</strong>
+            </div>
+            <div class="metric">
+                <span>Temporary Upload</span>
+                <strong>@(Model.AllowTemporaryLocalUpload ? "Enabled" : "Disabled")</strong>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <h2>App Registration Values</h2>
+            <table class="admin-table">
+                <tbody>
+                    <tr><th>Tenant ID</th><td class="hash">@Model.TenantId</td></tr>
+                    <tr><th>Client ID</th><td class="hash">@Model.ClientId</td></tr>
+                    <tr><th>Domain</th><td>@Model.Domain</td></tr>
+                    <tr><th>Callback Path</th><td>@Model.CallbackPath</td></tr>
+                    <tr><th>Local Redirect URI</th><td class="hash">@Model.LocalRedirectUri</td></tr>
+                    <tr><th>Production Redirect URI</th><td class="hash">@Model.ProductionRedirectUri</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="admin-card">
+            <h2>Required Entra Settings</h2>
+            <ol>
+                <li>App Registration platform type: <strong>Web</strong></li>
+                <li>Redirect URI: <code>@Model.LocalRedirectUri</code></li>
+                <li>Authentication setting: <strong>ID tokens enabled</strong></li>
+                <li>API permission: Microsoft Graph <strong>User.Read delegated</strong></li>
+                <li>Admin consent granted for City of Bowling Green</li>
+            </ol>
+        </div>
+
+        <div class="admin-card">
+            <h2>Actions</h2>
+            <div class="action-row">
+                <form method="post" action="/Admin/Entra/MarkConsentGranted">
+                    <button type="submit">Mark Consent Granted</button>
+                </form>
+
+                <form method="post" action="/Admin/Entra/EnableMicrosoftLogin" onsubmit="return confirm('Require Microsoft login for uploads? Temporary local upload will be disabled.');">
+                    <button type="submit" class="warning">Require Microsoft Login</button>
+                </form>
+
+                <form method="post" action="/Admin/Entra/EnableTemporaryUpload">
+                    <button type="submit">Enable Temporary Upload</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</section>
+

@@ -1,0 +1,92 @@
+﻿<section class="card">
+    <div class="page-title-row">
+        <div>
+            <h1>New Transfer</h1>
+            <p class="muted">Send secure files from the GIS Department.</p>
+        </div>
+        <a class="secondary-link" href="/">Back</a>
+    </div>
+
+    <form method="post" action="/Transfer/Create" enctype="multipart/form-data" id="transferForm">
+        @if (User?.Identity?.IsAuthenticated != true)
+        {
+            <div class="local-upload-banner">
+                <strong>Temporary Local Upload Mode</strong>
+                <span>Microsoft 365 sign-in is pending admin consent. Enter your sender information below.</span>
+            </div>
+
+            <div class="grid two">
+                <div>
+                    <label for="ManualSenderEmail">Your Email</label>
+                    <input name="ManualSenderEmail" id="ManualSenderEmail" type="email" required placeholder="your.name@bgohio.gov" />
+                </div>
+
+                <div>
+                    <label for="ManualSenderName">Your Name</label>
+                    <input name="ManualSenderName" id="ManualSenderName" placeholder="Your name" />
+                </div>
+            </div>
+        }
+        <div class="grid two">
+            <div>
+                <label for="RecipientEmail">Recipient Email</label>
+                <input name="RecipientEmail" id="RecipientEmail" type="email" required placeholder="recipient@example.com" />
+            </div>
+
+            <div>
+                <label for="ExpirationDays">Link Valid For</label>
+                <div class="input-suffix">
+                    <input name="ExpirationDays" id="ExpirationDays" type="number" min="1" max="30" value="7" required />
+                    <span>days</span>
+                </div>
+                <small>Maximum 30 days</small>
+            </div>
+        </div>
+
+        <label for="Subject">Subject</label>
+        <input name="Subject" id="Subject" placeholder="Project documents, plans, photos, etc." />
+
+        <label for="Message">Message</label>
+        <textarea name="Message" id="Message" placeholder="Optional message to the recipient"></textarea>
+
+        <div class="policy-note"><strong>Upload Policy</strong><br />Blocked file types and size limits are managed by FileDrop administrators.</div><label>Files</label>
+        <div id="dropZone" class="drop-zone">
+            <div class="drop-icon">â¬†</div>
+            <div class="drop-title">Drag files here</div>
+            <div class="drop-subtitle">or click to choose files</div>
+            <input name="Files" id="Files" type="file" multiple required />
+        </div>
+
+        <div id="fileSummary" class="file-summary hidden">
+            <div>
+                <strong id="fileCount">0 files</strong>
+                <span id="totalSize" class="muted"></span>
+            </div>
+            <button type="button" class="link-button" id="clearFiles">Clear</button>
+        </div>
+
+        <ul id="fileList" class="selected-files"></ul>
+
+        <div class="submit-row">
+            <button type="submit" id="uploadButton">Upload Files</button>
+            <div id="uploadStatus" class="upload-status hidden">
+                <div class="spinner"></div>
+                <span>Uploading... please keep this window open.</span>
+            </div>
+        </div>
+    </form>
+
+    @if (!ViewData.ModelState.IsValid)
+    {
+        <div class="validation">
+            @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
+            {
+                <div>@error.ErrorMessage</div>
+            }
+        </div>
+    }
+</section>
+
+<script src="/js/upload.js"></script>
+
+

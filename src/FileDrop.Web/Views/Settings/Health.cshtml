@@ -1,0 +1,82 @@
+﻿@model FileDrop.Web.Models.HealthCheckViewModel
+@{
+    string Size(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        int unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {units[unit]}";
+    }
+}
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a class="active" href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a><a href="/Admin/Deployment">Deployment</a><a href="/Admin/Reports">Reports</a><a href="/Admin/Email">Email Test</a><a href="/Admin/Branding">Branding</a><a href="/Admin/Entra">Entra Readiness</a><a href="/Admin/Production">Production</a>
+        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>System Health</h1>
+
+        @if (TempData["Message"] is not null)
+        {
+            <div class="notice">@TempData["Message"]</div>
+        }
+
+        <div class="metric-grid">
+            <div class="metric">
+                <span>Database</span>
+                <strong class="@(Model.DatabaseOk ? "ok-text" : "bad-text")">@(Model.DatabaseOk ? "OK" : "FAIL")</strong>
+                <p>@Model.DatabaseMessage</p>
+            </div>
+
+            <div class="metric">
+                <span>Storage</span>
+                <strong class="@(Model.StorageOk ? "ok-text" : "bad-text")">@(Model.StorageOk ? "OK" : "FAIL")</strong>
+                <p>@Model.StorageMessage</p>
+            </div>
+
+            <div class="metric">
+                <span>Email</span>
+                <strong class="@(Model.EmailConfigured ? "ok-text" : "bad-text")">@(Model.EmailConfigured ? "Configured" : "Missing")</strong>
+                <p>@Model.EmailMessage</p>
+            </div>
+
+            <div class="metric">
+                <span>Storage Used</span>
+                <strong>@Size(Model.StorageBytes)</strong>
+                <p>@Model.StorageRoot</p>
+            </div>
+
+            <div class="metric">
+                <span>Checked At</span>
+                <strong>@Model.CheckedAt.ToShortTimeString()</strong>
+                <p>@Model.CheckedAt.ToShortDateString()</p>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Maintenance</h2>
+            <form method="post" action="/Admin/RunCleanup">
+                <button type="submit" class="warning">Run Expired Transfer Cleanup Now</button>
+            </form>
+        </div>
+    </div>
+</section>
+
+
+
+
+
+
+

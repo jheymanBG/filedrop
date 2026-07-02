@@ -1,0 +1,66 @@
+﻿@model FileDrop.Web.Models.DownloadViewModel
+@{
+    string Size(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        int unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {units[unit]}";
+    }
+
+    long total = Model.Files.Sum(f => f.FileSizeBytes);
+}
+
+<section class="card download-card">
+    <div class="page-title-row">
+        <div>
+            <div class="eyebrow">City of Bowling Green Secure File Transfer</div>
+            <h1>Secure Files</h1>
+            <p>The GIS Department has sent you secure files.</p>
+        </div>
+    </div>
+
+    <div class="download-summary">
+        <div><span>Files</span><strong>@Model.Files.Count</strong></div>
+        <div><span>Total Size</span><strong>@Size(total)</strong></div>
+        <div><span>Expires</span><strong>@Model.Transfer.ExpirationDate.ToLocalTime()</strong></div>
+    </div>
+
+    @if (Model.Files.Count > 1)
+    {
+        <a class="button" href="/Transfer/DownloadAll/@Model.Transfer.DownloadToken">Download All as ZIP</a>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(Model.Transfer.Message))
+    {
+        <div class="message-box">
+            @Model.Transfer.Message
+        </div>
+    }
+
+    <ul class="file-list">
+    @foreach (var file in Model.Files)
+    {
+        var ext = System.IO.Path.GetExtension(file.OriginalFileName).Trim('.').ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(ext)) ext = "FILE";
+
+        <li>
+            <div class="file-main">
+                <div class="file-icon">@ext</div>
+                <div>
+                    <a href="/Transfer/File/@Model.Transfer.DownloadToken/@file.FileId">@file.OriginalFileName</a>
+                    <span>@Size(file.FileSizeBytes)</span>
+                </div>
+            </div>
+            <a class="mini-button" href="/Transfer/File/@Model.Transfer.DownloadToken/@file.FileId">Download</a>
+        </li>
+    }
+    </ul>
+
+    <p class="muted">Only download files you were expecting. Contact the sender if this link was unexpected.</p>
+</section>

@@ -1,0 +1,54 @@
+﻿@model FileDrop.Web.Models.AdminAuditViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a class="active" href="/Admin/Audit">Audit Log</a>
+        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Audit Log</h1>
+
+        <form method="get" class="search-bar">
+            <input name="query" value="@Model.Query" placeholder="Search user, action, or details" />
+            <button type="submit">Search</button>
+        </form>
+
+        <div class="admin-card">
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>User</th>
+                        <th>Action</th>
+                        <th>Details</th>
+                        <th>IP</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var r in Model.Records)
+                {
+                    <tr>
+                        <td>@r.CreatedDate.ToLocalTime()</td>
+                        <td>@r.UserEmail</td>
+                        <td><strong>@r.Action</strong></td>
+                        <td>@r.Details</td>
+                        <td>@r.IpAddress</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+
+
+
+
+
+
+

@@ -1,0 +1,66 @@
+﻿@model FileDrop.Web.Models.EmailTestViewModel
+@inject IConfiguration Config
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a class="active" href="/Admin/Email">Email Test</a>
+        <a href="/">User Home</a>
+        <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Email Test</h1>
+        <p class="muted">Send a test message through the configured Microsoft 365 SMTP relay.</p>
+
+        <div class="metric-grid">
+            <div class="metric">
+                <span>SMTP Server</span>
+                <strong>@Config["Email:SmtpServer"]</strong>
+            </div>
+            <div class="metric">
+                <span>From</span>
+                <strong>@Config["Email:FromEmail"]</strong>
+            </div>
+            <div class="metric">
+                <span>BCC</span>
+                <strong>@Config["Notifications:AlwaysBcc"]</strong>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <form method="post" action="/Admin/Email/Test">
+                <label for="ToEmail">Send test to</label>
+                <input id="ToEmail" name="ToEmail" type="email" value="@Model.ToEmail" placeholder="name@bgohio.gov" required />
+                <button type="submit">Send Test Email</button>
+            </form>
+
+            @if (Model.Success is not null)
+            {
+                <div class="notice @(Model.Success == true ? "notice-success" : "notice-error")">
+                    @Model.Result
+                </div>
+            }
+        </div>
+
+        <div class="admin-card">
+            <h2>Troubleshooting</h2>
+            <ul>
+                <li>If no message arrives, check junk/quarantine and Exchange message trace.</li>
+                <li>Confirm the server can connect outbound to port 25.</li>
+                <li>Confirm <strong>noreply@bgohio.gov</strong> is accepted as a sender.</li>
+                <li>Each test is written to the Audit Log.</li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+
+

@@ -1,0 +1,60 @@
+﻿@inject FileDrop.Web.Services.IBrandingService BrandingService
+@{
+    var branding = await BrandingService.GetAsync();
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <title>FileDrop | @branding.OrganizationName</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="/css/site.css" />
+</head>
+<body>
+<header class="site-header">
+    <div class="brand-wrap">
+        @if (!string.IsNullOrWhiteSpace(branding.LogoPath))
+        {
+            <img class="site-logo" src="@branding.LogoPath" alt="@branding.OrganizationName logo" />
+        }
+        <div>
+            <div class="brand">@branding.OrganizationName</div>
+            <div class="subbrand">@branding.ApplicationTitle</div>
+        </div>
+    </div>
+
+    <nav class="top-nav">
+        <a href="/">Home</a>
+        <a href="/Home/Help">Help</a>
+        <a href="/Home/About">About</a>
+        <a href="/Admin">Admin</a>
+        @if (User?.Identity?.IsAuthenticated == true)
+        {
+            <a href="/Transfer/Create">New Transfer</a>
+            <span>@User.Identity.Name</span>
+            <a href="/MicrosoftIdentity/Account/SignOut">Sign out</a>
+        }
+        else
+        {
+            <a href="/MicrosoftIdentity/Account/SignIn">Sign in</a>
+        }
+    </nav>
+</header>
+
+<main>
+    @RenderBody()
+</main>
+
+<footer class="site-footer">
+    <div>
+        <strong>@branding.OrganizationName</strong><br />
+        @branding.ApplicationTitle
+    </div>
+    <div>
+        <a href="/Home/Help">Help</a>
+        <a href="/Home/About">About</a>
+        <a href="/Admin/Health">System Health</a>
+    </div>
+</footer>
+</body>
+</html>

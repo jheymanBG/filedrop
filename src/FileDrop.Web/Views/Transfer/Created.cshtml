@@ -1,0 +1,37 @@
+﻿@model FileDrop.Web.Models.TransferRecord
+
+<section class="card success-card">
+    <div class="success-icon">âœ“</div>
+    <h1>Transfer Created</h1>
+    <p>The secure transfer was created successfully.</p>
+
+    <div class="detail-grid">
+        <div>
+            <span>Recipient</span>
+            <strong>@Model.RecipientEmail</strong>
+        </div>
+        <div>
+            <span>Expires</span>
+            <strong>@Model.ExpirationDate.ToLocalTime()</strong>
+        </div>
+    </div>
+
+    <label>Download Link</label>
+    <div class="copy-row">
+        <input id="downloadLink" value="@ViewBag.DownloadLink" readonly />
+        <button type="button" id="copyLink">Copy</button>
+    </div>
+
+    <p class="muted">An email notification was sent if SMTP relay accepted the message.</p>
+
+    <a class="button" href="/Transfer/Create">Send Another Transfer</a>
+</section>
+
+<script>
+document.getElementById('copyLink')?.addEventListener('click', async () => {
+    const input = document.getElementById('downloadLink');
+    input.select();
+    await navigator.clipboard.writeText(input.value);
+    document.getElementById('copyLink').innerText = 'Copied';
+});
+</script>

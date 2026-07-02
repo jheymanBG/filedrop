@@ -1,0 +1,19 @@
+﻿bin/
+obj/
+.vs/
+Publish/
+Backups/
+Staging/
+logs/
+*.user
+*.suo
+*.bak
+*.zip
+*.log
+
+# Environment-specific config
+src/FileDrop.Web/appsettings.Production.json
+Publish/appsettings.Production.json
+
+# FileDrop storage
+C:/SecureFileTransfer/

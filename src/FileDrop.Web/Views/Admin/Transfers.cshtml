@@ -1,0 +1,71 @@
+﻿@model FileDrop.Web.Models.AdminTransferSearchViewModel
+@{
+    string Size(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        int unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+        return $"{value:0.##} {units[unit]}";
+    }
+}
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a class="active" href="/Admin/Transfers">Transfers</a>
+        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Transfers</h1>
+
+        <form method="get" class="search-bar">
+            <input name="query" value="@Model.Query" placeholder="Search sender, recipient, subject, or filename" />
+            <select name="status">
+                <option value="">Any status</option>
+                <option value="Active" selected="@(Model.Status == "Active")">Active</option>
+                <option value="Disabled" selected="@(Model.Status == "Disabled")">Disabled</option>
+            </select>
+            <button type="submit">Search</button>
+        </form>
+
+        <div class="admin-card">
+            <table class="admin-table">
+                <thead>
+                    <tr><th>Subject</th><th>Sender</th><th>Recipient</th><th>Files</th><th>Size</th><th>Created</th><th>Expires</th><th>Downloads</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                @foreach (var t in Model.Results)
+                {
+                    <tr>
+                        <td><a href="/Admin/Transfer/@t.TransferId">@(string.IsNullOrWhiteSpace(t.Subject) ? "(No subject)" : t.Subject)</a></td>
+                        <td>@t.SenderEmail</td>
+                        <td>@t.RecipientEmail</td>
+                        <td>@t.FileCount</td>
+                        <td>@Size(t.TotalBytes)</td>
+                        <td>@t.CreatedDate.ToLocalTime()</td>
+                        <td>@t.ExpirationDate.ToLocalTime()</td>
+                        <td>@t.DownloadCount</td>
+                        <td><span class="badge @t.Status.ToLowerInvariant()">@t.Status</span></td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+
+
+
+
+
+
+
+
