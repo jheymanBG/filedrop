@@ -1,19 +1,58 @@
-﻿bin/
-obj/
+﻿# Visual Studio
 .vs/
+bin/
+obj/
+TestResults/
+
+# Publish
 Publish/
+
+# Backups
 Backups/
 Staging/
+
+# Logs
 logs/
-*.user
-*.suo
-*.bak
-*.zip
 *.log
 
-# Environment-specific config
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Packages
+packages/
+
+# Build artifacts
+*.zip
+*.bak
+*.tmp
+
+# SQL Server
+*.mdf
+*.ldf
+
+# Environment-specific configuration
 src/FileDrop.Web/appsettings.Production.json
 Publish/appsettings.Production.json
 
-# FileDrop storage
+# Upload and storage folders
+Uploads/
+Storage/
+Temp/
 C:/SecureFileTransfer/
+
+# IIS Express
+applicationhost.config
+
+# Rider / VS Code
+.idea/
+.vscode/
+
+# Git
+.git/
+
+# Optional: phase installer folders (if stored under this project)
+FileDrop_Phase*/
+DeployPackages/
