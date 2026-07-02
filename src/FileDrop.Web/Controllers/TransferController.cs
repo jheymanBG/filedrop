@@ -15,6 +15,8 @@ public sealed class TransferController : Controller
     private readonly ITransferRepository _repo;
     private readonly IEmailService _email;
     private readonly IAuditRepository _audit;
+    private readonly IVirusScanService _virusScan;
+    private readonly IFileScanRepository _scanRepo;
     private readonly IUploadPolicyService _uploadPolicy;
     private readonly ILogger<TransferController> _logger;
 
@@ -25,6 +27,8 @@ public sealed class TransferController : Controller
         ITransferRepository repo,
         IEmailService email,
         IAuditRepository audit,
+        IVirusScanService virusScan,
+        IFileScanRepository scanRepo,
         IUploadPolicyService uploadPolicy,
         ILogger<TransferController> logger)
     {
@@ -34,6 +38,8 @@ public sealed class TransferController : Controller
         _repo = repo;
         _email = email;
         _audit = audit;
+        _virusScan = virusScan;
+        _scanRepo = scanRepo;
         _uploadPolicy = uploadPolicy;
         _logger = logger;
     }
@@ -154,11 +160,67 @@ public sealed class TransferController : Controller
             {
                 var saved = await _storage.SaveFileAsync(file, transfer.TransferId, cancellationToken);
 
+                var fileId = Guid.NewGuid();
+                var originalName = Path.GetFileName(file.FileName);
+
+                var enableScanning = (_config["Security:EnableVirusScanning"] ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+                var quarantineOnFailure = (_config["Security:QuarantineOnScanFailure"] ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+                var blockUnscanned = (_config["Security:BlockUnscannedFiles"] ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+
+                if (enableScanning)
+                {
+                    var scan = await _virusScan.ScanAsync(saved.storagePath, cancellationToken);
+                    var scanStoragePath = saved.storagePath;
+
+                    if (!scan.IsClean)
+                    {
+                        if (quarantineOnFailure)
+                        {
+                            var quarantinePath = await _virusScan.QuarantineAsync(saved.storagePath, originalName, transfer.TransferId, cancellationToken);
+                            scanStoragePath = quarantinePath ?? saved.storagePath;
+                            scan.Result = scan.Result == "Infected" ? "Infected" : "Quarantined";
+                        }
+
+                        await _scanRepo.AddAsync(new FileScanRecord
+                        {
+                            TransferId = transfer.TransferId,
+                            FileId = fileId,
+                            OriginalFileName = originalName,
+                            StoragePath = scanStoragePath,
+                            Sha256Hash = saved.sha256,
+                            Engine = scan.Engine,
+                            Result = scan.Result,
+                            ThreatName = scan.ThreatName,
+                            Details = scan.Details
+                        });
+
+                        if (blockUnscanned || scan.Result.Equals("Infected", StringComparison.OrdinalIgnoreCase) || scan.Result.Equals("Quarantined", StringComparison.OrdinalIgnoreCase))
+                        {
+                            ModelState.AddModelError("Files", $"{originalName} failed security scanning and was not accepted.");
+                            await _audit.WriteAsync(transfer.TransferId, senderEmail, "Upload Blocked By Security Scan", $"{originalName}; Result={scan.Result}", HttpContext.Connection.RemoteIpAddress?.ToString());
+                            return View();
+                        }
+                    }
+
+                    await _scanRepo.AddAsync(new FileScanRecord
+                    {
+                        TransferId = transfer.TransferId,
+                        FileId = fileId,
+                        OriginalFileName = originalName,
+                        StoragePath = scanStoragePath,
+                        Sha256Hash = saved.sha256,
+                        Engine = scan.Engine,
+                        Result = scan.Result,
+                        ThreatName = scan.ThreatName,
+                        Details = scan.Details
+                    });
+                }
+
                 savedFiles.Add(new TransferFileRecord
                 {
-                    FileId = Guid.NewGuid(),
+                    FileId = fileId,
                     TransferId = transfer.TransferId,
-                    OriginalFileName = Path.GetFileName(file.FileName),
+                    OriginalFileName = originalName,
                     StoredFileName = saved.storedFileName,
                     StoragePath = saved.storagePath,
                     ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
@@ -367,6 +429,7 @@ public sealed class FileCallbackResult : FileResult
         await _callback(response.Body, context);
     }
 }
+
 
 
 

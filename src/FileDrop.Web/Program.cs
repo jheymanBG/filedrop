@@ -45,6 +45,8 @@ builder.Services.AddScoped<IEmailTestService, EmailTestService>();
 builder.Services.AddScoped<IBrandingService, BrandingService>();
 builder.Services.AddScoped<IEntraReadinessService, EntraReadinessService>();
 builder.Services.AddScoped<IProductionRepository, ProductionRepository>();
+builder.Services.AddScoped<IVirusScanService, VirusScanService>();
+builder.Services.AddScoped<IFileScanRepository, FileScanRepository>();
 
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
 builder.Services.Configure<IISServerOptions>(options => options.MaxRequestBodySize = null);
@@ -69,6 +71,7 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
 app.Run();
+
 
 
 

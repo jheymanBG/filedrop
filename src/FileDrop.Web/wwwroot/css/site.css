@@ -841,3 +841,13 @@ button.danger { background: #9a1f1f; }
 }
 .production-table input[type="checkbox"] { width: auto; }
 .production-table input[name="notes"] { min-width: 240px; }
+.badge.infected,
+.badge.failed,
+.badge.quarantined {
+    background: #f4e1e1;
+    color: #9a1f1f;
+}
+.badge.clean {
+    background: #e9f1eb;
+    color: #0f5f3f;
+}

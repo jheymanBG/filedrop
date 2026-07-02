@@ -1,0 +1,72 @@
+﻿@model FileDrop.Web.Models.SecurityDashboardViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a href="/Admin/Entra">Entra Readiness</a>
+        <a href="/Admin/Production">Production</a>
+        <a class="active" href="/Admin/Security">Security</a>
+        <a href="/">User Home</a>
+        <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Security Scanning</h1>
+
+        <div class="metric-grid">
+            <div class="metric"><span>Total Scans</span><strong>@Model.TotalScans</strong></div>
+            <div class="metric"><span>Clean</span><strong class="ok-text">@Model.CleanCount</strong></div>
+            <div class="metric"><span>Infected</span><strong class="bad-text">@Model.InfectedCount</strong></div>
+            <div class="metric"><span>Quarantined</span><strong>@Model.QuarantinedCount</strong></div>
+            <div class="metric"><span>Failed</span><strong class="bad-text">@Model.FailedCount</strong></div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Recent Scan Results</h2>
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>File</th>
+                        <th>Result</th>
+                        <th>Engine</th>
+                        <th>Threat</th>
+                        <th>SHA-256</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var scan in Model.RecentScans)
+                {
+                    <tr>
+                        <td>@scan.ScannedDate.ToLocalTime()</td>
+                        <td>@scan.OriginalFileName</td>
+                        <td><span class="badge @scan.Result.ToLowerInvariant()">@scan.Result</span></td>
+                        <td>@scan.Engine</td>
+                        <td>@scan.ThreatName</td>
+                        <td class="hash">@scan.Sha256Hash</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="admin-card">
+            <h2>Settings</h2>
+            <p>Review these settings under <a href="/Admin/Settings">Admin Settings</a>:</p>
+            <ul>
+                <li><code>Security.EnableVirusScanning</code></li>
+                <li><code>Security.QuarantineOnScanFailure</code></li>
+                <li><code>Security.BlockUnscannedFiles</code></li>
+            </ul>
+        </div>
+    </div>
+</section>
