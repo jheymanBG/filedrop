@@ -1,41 +1,28 @@
-﻿<section class="card">
-    <div class="page-title-row">
-        <div>
-            <h1>New Transfer</h1>
-            <p class="muted">Send secure files from the GIS Department.</p>
-        </div>
-        <a class="secondary-link" href="/">Back</a>
+﻿<section class="card transfer-card">
+    <a class="back-link" href="/">Back</a>
+
+    <h1>New Transfer</h1>
+    <p class="muted">Send secure files from the GIS Department.</p>
+
+    <div class="signed-in-banner">
+        <strong>Microsoft 365 authenticated</strong>
+        <span>You are signed in as @User.Identity?.Name.</span>
     </div>
 
-    <form method="post" action="/Transfer/Create" enctype="multipart/form-data" id="transferForm">
-        @if (User?.Identity?.IsAuthenticated != true)
-        {
-            <div class="local-upload-banner">
-                <strong>Temporary Local Upload Mode</strong>
-                <span>Microsoft 365 sign-in is pending admin consent. Enter your sender information below.</span>
-            </div>
+    <form method="post" action="/Transfer/Create" id="transferForm">
+        @Html.AntiForgeryToken()
 
-            <div class="grid two">
-                <div>
-                    <label for="ManualSenderEmail">Your Email</label>
-                    <input name="ManualSenderEmail" id="ManualSenderEmail" type="email" required placeholder="your.name@bgohio.gov" />
-                </div>
+        <input type="hidden" name="UploadedIds" id="UploadedIds" />
 
-                <div>
-                    <label for="ManualSenderName">Your Name</label>
-                    <input name="ManualSenderName" id="ManualSenderName" placeholder="Your name" />
-                </div>
-            </div>
-        }
         <div class="grid two">
             <div>
                 <label for="RecipientEmail">Recipient Email</label>
-                <input name="RecipientEmail" id="RecipientEmail" type="email" required placeholder="recipient@example.com" />
+                <input name="RecipientEmail" id="RecipientEmail" type="email" placeholder="recipient@example.com" required />
             </div>
 
             <div>
                 <label for="ExpirationDays">Link Valid For</label>
-                <div class="input-suffix">
+                <div class="inline-field">
                     <input name="ExpirationDays" id="ExpirationDays" type="number" min="1" max="30" value="7" required />
                     <span>days</span>
                 </div>
@@ -47,46 +34,181 @@
         <input name="Subject" id="Subject" placeholder="Project documents, plans, photos, etc." />
 
         <label for="Message">Message</label>
-        <textarea name="Message" id="Message" placeholder="Optional message to the recipient"></textarea>
+        <textarea name="Message" id="Message" rows="5" placeholder="Optional message to the recipient"></textarea>
 
-        <div class="policy-note"><strong>Upload Policy</strong><br />Blocked file types and size limits are managed by FileDrop administrators.</div><label>Files</label>
-        <div id="dropZone" class="drop-zone">
-            <div class="drop-icon">â¬†</div>
-            <div class="drop-title">Drag files here</div>
-            <div class="drop-subtitle">or click to choose files</div>
-            <input name="Files" id="Files" type="file" multiple required />
-        </div>
+        <div class="grid two">
+            <div class="checkbox-card">
+                <label class="checkbox-label">
+                    <input name="DisableAfterFirstDownload" value="true" type="checkbox" />
+                    <span>
+                        <strong>Disable After First Download</strong>
+                        <small>Creates a one-time link. After the first download, the link is automatically disabled.</small>
+                    </span>
+                </label>
+            </div>
 
-        <div id="fileSummary" class="file-summary hidden">
             <div>
-                <strong id="fileCount">0 files</strong>
-                <span id="totalSize" class="muted"></span>
-            </div>
-            <button type="button" class="link-button" id="clearFiles">Clear</button>
-        </div>
-
-        <ul id="fileList" class="selected-files"></ul>
-
-        <div class="submit-row">
-            <button type="submit" id="uploadButton">Upload Files</button>
-            <div id="uploadStatus" class="upload-status hidden">
-                <div class="spinner"></div>
-                <span>Uploading... please keep this window open.</span>
+                <label for="MaxDownloads">Maximum Downloads</label>
+                <input name="MaxDownloads" id="MaxDownloads" type="number" min="1" placeholder="Unlimited" />
+                <small>Optional. Leave blank for unlimited downloads until expiration.</small>
             </div>
         </div>
+
+        <div class="policy-note">
+            <strong>Chunked Uploads</strong><br />
+            Large files are uploaded in chunks with live progress. After the upload completes, FileDrop will automatically send the transfer.
+        </div>
+
+        <label for="files">Files</label>
+        <input id="files" type="file" multiple required />
+
+        <div id="uploadProgress" class="upload-progress-list"></div>
+
+        <button id="uploadButton" type="button">Upload and Send</button>
+        <button id="createButton" type="submit" disabled style="display:none;">Create Transfer</button>
     </form>
-
-    @if (!ViewData.ModelState.IsValid)
-    {
-        <div class="validation">
-            @foreach (var error in ViewData.ModelState.Values.SelectMany(v => v.Errors))
-            {
-                <div>@error.ErrorMessage</div>
-            }
-        </div>
-    }
 </section>
 
-<script src="/js/upload.js"></script>
+<script>
+(() => {
+    const chunkSize = 10 * 1024 * 1024;
+    const filesInput = document.getElementById('files');
+    const progressList = document.getElementById('uploadProgress');
+    const uploadButton = document.getElementById('uploadButton');
+    const createButton = document.getElementById('createButton');
+    const uploadedIds = document.getElementById('UploadedIds');
+    const completedUploadIds = [];
+
+    function addProgressRow(file) {
+        const row = document.createElement('div');
+        row.className = 'upload-progress-row';
+        row.innerHTML = `
+            <div class="upload-progress-title">
+                <strong>${escapeHtml(file.name)}</strong>
+                <span>0%</span>
+            </div>
+            <div class="progress-shell"><div class="progress-fill"></div></div>
+            <div class="upload-progress-detail">Waiting...</div>
+        `;
+        progressList.appendChild(row);
+        return row;
+    }
+
+    function setProgress(row, percent, detail) {
+        row.querySelector('.progress-fill').style.width = percent + '%';
+        row.querySelector('.upload-progress-title span').textContent = Number(percent).toFixed(1) + '%';
+        row.querySelector('.upload-progress-detail').textContent = detail;
+    }
+
+    async function uploadFile(file) {
+        const row = addProgressRow(file);
+
+        setProgress(row, 0, 'Starting upload...');
+
+        const start = await fetch('/Upload/Start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fileName: file.name,
+                contentType: file.type || 'application/octet-stream',
+                totalBytes: file.size,
+                chunkSizeBytes: chunkSize
+            })
+        });
+
+        if (!start.ok) {
+            const err = await start.json().catch(() => ({ error: 'Could not start upload.' }));
+            throw new Error(err.error || 'Could not start upload.');
+        }
+
+        const session = await start.json();
+
+        for (let i = 0; i < session.totalChunks; i++) {
+            const startByte = i * session.chunkSizeBytes;
+            const endByte = Math.min(startByte + session.chunkSizeBytes, file.size);
+            const blob = file.slice(startByte, endByte);
+
+            const form = new FormData();
+            form.append('chunk', blob, file.name + '.part');
+
+            const response = await fetch(`/Upload/Chunk?uploadId=${session.uploadId}&chunkIndex=${i}`, {
+                method: 'POST',
+                body: form
+            });
+
+            if (!response.ok) {
+                const err = await response.json().catch(() => ({ error: 'Chunk upload failed.' }));
+                throw new Error(err.error || 'Chunk upload failed.');
+            }
+
+            const status = await response.json();
+            setProgress(row, status.percent, `Uploaded ${status.chunksReceived} of ${status.totalChunks} chunks`);
+        }
+
+        setProgress(row, 99.5, 'Finalizing file...');
+
+        const complete = await fetch('/Upload/Complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId: session.uploadId })
+        });
+
+        if (!complete.ok) {
+            const err = await complete.json().catch(() => ({ error: 'Could not finalize upload.' }));
+            throw new Error(err.error || 'Could not finalize upload.');
+        }
+
+        const finalStatus = await complete.json();
+        completedUploadIds.push(finalStatus.uploadId);
+        uploadedIds.value = completedUploadIds.join(',');
+
+        setProgress(row, 100, 'Upload complete');
+    }
+
+    uploadButton.addEventListener('click', async () => {
+        const files = Array.from(filesInput.files || []);
+        if (files.length === 0) {
+            alert('Choose one or more files first.');
+            return;
+        }
+
+        uploadButton.disabled = true;
+        createButton.disabled = true;
+        progressList.innerHTML = '';
+        completedUploadIds.length = 0;
+        uploadedIds.value = '';
+
+        try {
+            for (const file of files) {
+                await uploadFile(file);
+            }
+
+            createButton.disabled = false;
+            uploadButton.textContent = 'Sending...';
+            document.getElementById('transferForm').submit();
+        } catch (err) {
+            alert(err.message || err);
+            uploadButton.disabled = false;
+            uploadButton.textContent = 'Retry Upload';
+        }
+    });
+
+    document.getElementById('transferForm').addEventListener('submit', (e) => {
+        if (!uploadedIds.value) {
+            e.preventDefault();
+            alert('Upload files first.');
+        }
+    });
+
+    function escapeHtml(value) {
+        return value
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+})();
+</script>
 
 

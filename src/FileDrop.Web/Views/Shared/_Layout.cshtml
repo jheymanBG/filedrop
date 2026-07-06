@@ -1,6 +1,8 @@
 ﻿@inject FileDrop.Web.Services.IBrandingService BrandingService
+@inject FileDrop.Web.Services.IAdminAccessService AdminAccessService
 @{
     var branding = await BrandingService.GetAsync();
+    var hasAdminAccess = await AdminAccessService.HasAccessAsync(Context);
 }
 <!DOCTYPE html>
 <html lang="en">
@@ -11,11 +13,11 @@
     <link rel="stylesheet" href="/css/site.css" />
 </head>
 <body>
-<header class="site-header">
-    <div class="brand-wrap">
+<header class="site-header polished-header">
+    <div class="brand-wrap polished-brand">
         @if (!string.IsNullOrWhiteSpace(branding.LogoPath))
         {
-            <img class="site-logo" src="@branding.LogoPath" alt="@branding.OrganizationName logo" />
+            <img class="site-logo header-logo-white" src="@branding.LogoPath" alt="@branding.OrganizationName logo" />
         }
         <div>
             <div class="brand">@branding.OrganizationName</div>
@@ -26,8 +28,12 @@
     <nav class="top-nav">
         <a href="/">Home</a>
         <a href="/Home/Help">Help</a>
-        <a href="/Home/About">About</a>
-        <a href="/Admin">Admin</a>
+
+        @if (hasAdminAccess)
+        {
+            <a href="/Admin">Admin</a>
+        }
+
         @if (User?.Identity?.IsAuthenticated == true)
         {
             <a href="/Transfer/Create">New Transfer</a>
@@ -36,7 +42,7 @@
         }
         else
         {
-            <a href="/MicrosoftIdentity/Account/SignIn">Sign in</a>
+            <a href="/Transfer/Create">New Transfer</a>
         }
     </nav>
 </header>
@@ -53,7 +59,10 @@
     <div>
         <a href="/Home/Help">Help</a>
         <a href="/Home/About">About</a>
-        <a href="/Admin/Health">System Health</a>
+        @if (hasAdminAccess)
+        {
+            <a href="/Admin/Health">System Health</a>
+        }
     </div>
 </footer>
 </body>

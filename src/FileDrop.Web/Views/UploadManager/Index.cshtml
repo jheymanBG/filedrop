@@ -1,0 +1,69 @@
+﻿@model FileDrop.Web.Models.UploadManagerViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a>
+        <a href="/Admin/AdminUsers">Admin Users</a>
+        <a href="/Admin/Uploads" class="active">Upload Manager</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a href="/Admin/Entra">Entra Readiness</a>
+        <a href="/Admin/EntraValidation">Entra Validation</a>
+        <a href="/Admin/Production">Production</a>
+        <a href="/Admin/Security">Security</a>
+        <a href="/Admin/Authorization">Authorization</a>
+        <a href="/">User Home</a>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Upload Manager</h1>
+
+        @if (TempData["Message"] is not null)
+        {
+            <div class="notice">@TempData["Message"]</div>
+        }
+
+        <div class="metric-grid">
+            <div class="metric"><span>Configured Limit</span><strong>@Model.MaximumUploadGB GB</strong></div>
+            <div class="metric"><span>IIS web.config Limit</span><strong>@Math.Round(Model.EffectiveWebConfigBytes / 1024m / 1024m / 1024m, 2) GB</strong></div>
+            <div class="metric"><span>Status</span><strong class="@(Model.IsSynced ? "ok-text" : "bad-text")">@(Model.IsSynced ? "Synced" : "Out of Sync")</strong></div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Configure Upload Limits</h2>
+            <form method="post" action="/Admin/Uploads/Save">
+                <label for="maximumUploadGb">Maximum Upload Size (GB)</label>
+                <input id="maximumUploadGb" name="maximumUploadGb" type="number" min="1" max="500" step="0.5" value="@Model.MaximumUploadGB" />
+
+                <label for="maximumFilesPerTransfer">Maximum Files Per Transfer</label>
+                <input id="maximumFilesPerTransfer" name="maximumFilesPerTransfer" type="number" min="1" max="10000" value="@Model.MaximumFilesPerTransfer" />
+
+                <label for="requestTimeoutMinutes">Upload Request Timeout (minutes)</label>
+                <input id="requestTimeoutMinutes" name="requestTimeoutMinutes" type="number" min="5" max="2880" value="@Model.RequestTimeoutMinutes" />
+
+                <button type="submit">Save and Sync Configuration</button>
+            </form>
+        </div>
+
+        <div class="admin-card">
+            <h2>Diagnostics</h2>
+            <table class="admin-table">
+                <tbody>
+                    <tr><th>Publish web.config</th><td class="hash">@Model.PublishWebConfigPath</td><td>@(Model.PublishWebConfigExists ? "Found" : "Missing")</td></tr>
+                    <tr><th>Configured Bytes</th><td>@Model.MaximumUploadBytes</td><td></td></tr>
+                    <tr><th>Effective IIS Bytes</th><td>@Model.EffectiveWebConfigBytes</td><td></td></tr>
+                </tbody>
+            </table>
+            <form method="post" action="/Admin/Uploads/Repair">
+                <button type="submit" class="warning">Repair / Resync Upload Configuration</button>
+            </form>
+        </div>
+    </div>
+</section>

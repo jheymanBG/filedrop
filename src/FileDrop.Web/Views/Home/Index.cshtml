@@ -13,8 +13,6 @@
             <a class="button" href="/Transfer/Create">New Transfer</a>
             <a class="button secondary-button" href="/Home/Help">How it works</a>
         </div>
-
-        <p class="muted small-note">Microsoft 365 sign-in can be enabled after Entra admin consent is granted. Temporary local upload mode is currently available.</p>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(branding.LogoPath))
@@ -35,3 +33,30 @@
         <div><span>3</span><strong>Send link</strong><p>The recipient receives an email with a secure download link.</p></div>
     </div>
 </section>
+
+<section class="feature-grid">
+    <div class="feature-card">
+        <div class="feature-icon">Secure</div>
+        <h3>Secure</h3>
+        <p>Uploads are validated, scanned, logged, and protected by expiring download links.</p>
+    </div>
+
+    <div class="feature-card">
+        <div class="feature-icon">Link</div>
+        <h3>Simple</h3>
+        <p>Create a transfer, upload files, and share a secure link with the recipient.</p>
+    </div>
+
+    <div class="feature-card">
+        <div class="feature-icon">Time</div>
+        <h3>Controlled</h3>
+        <p>Set expiration dates and download limits for every transfer.</p>
+    </div>
+
+    <div class="feature-card">
+        <div class="feature-icon">Audit</div>
+        <h3>Auditable</h3>
+        <p>Transfers, downloads, security scans, and admin actions are written to the audit log.</p>
+    </div>
+</section>
+

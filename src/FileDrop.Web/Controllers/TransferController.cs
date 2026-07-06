@@ -17,6 +17,7 @@ public sealed class TransferController : Controller
     private readonly IAuditRepository _audit;
     private readonly IVirusScanService _virusScan;
     private readonly IFileScanRepository _scanRepo;
+    private readonly IChunkedUploadService _chunkedUploads;
     private readonly IUploadPolicyService _uploadPolicy;
     private readonly ILogger<TransferController> _logger;
 
@@ -29,6 +30,7 @@ public sealed class TransferController : Controller
         IAuditRepository audit,
         IVirusScanService virusScan,
         IFileScanRepository scanRepo,
+        IChunkedUploadService chunkedUploads,
         IUploadPolicyService uploadPolicy,
         ILogger<TransferController> logger)
     {
@@ -40,18 +42,19 @@ public sealed class TransferController : Controller
         _audit = audit;
         _virusScan = virusScan;
         _scanRepo = scanRepo;
+        _chunkedUploads = chunkedUploads;
         _uploadPolicy = uploadPolicy;
         _logger = logger;
     }
 
-    [AllowAnonymous]
+    [Authorize]
     [HttpGet]
     public IActionResult Create()
     {
         return View();
     }
 
-    [AllowAnonymous]
+    [Authorize]
     [HttpPost]
     [RequestSizeLimit(long.MaxValue)]
     [RequestFormLimits(MultipartBodyLengthLimit = long.MaxValue)]
@@ -61,7 +64,15 @@ public sealed class TransferController : Controller
         {
             var form = await Request.ReadFormAsync(cancellationToken);
 
-            var recipientEmail = form["RecipientEmail"].ToString().Trim();
+                        var uploadedIdsText = form["UploadedIds"].ToString();
+            var uploadedIds = uploadedIdsText
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(x => Guid.TryParse(x, out var id) ? id : Guid.Empty)
+                .Where(x => x != Guid.Empty)
+                .ToList();
+
+            var completedChunkFiles = await _chunkedUploads.GetCompletedAsync(uploadedIds);
+var recipientEmail = form["RecipientEmail"].ToString().Trim();
             var manualSenderEmail = form["ManualSenderEmail"].ToString().Trim();
             var manualSenderName = form["ManualSenderName"].ToString().Trim();
             var subject = form["Subject"].ToString();
@@ -155,6 +166,21 @@ public sealed class TransferController : Controller
             };
 
             var savedFiles = new List<TransferFileRecord>();
+            foreach (var completed in completedChunkFiles)
+            {
+                savedFiles.Add(new TransferFileRecord
+                {
+                    FileId = Guid.NewGuid(),
+                    TransferId = transfer.TransferId,
+                    OriginalFileName = completed.OriginalFileName,
+                    StoredFileName = completed.StoredFileName,
+                    StoragePath = completed.StoragePath,
+                    ContentType = string.IsNullOrWhiteSpace(completed.ContentType) ? "application/octet-stream" : completed.ContentType,
+                    FileSizeBytes = completed.FileSizeBytes,
+                    Sha256Hash = completed.Sha256Hash
+                });
+            }
+
 
             foreach (var file in files)
             {
@@ -429,6 +455,9 @@ public sealed class FileCallbackResult : FileResult
         await _callback(response.Body, context);
     }
 }
+
+
+
 
 
 

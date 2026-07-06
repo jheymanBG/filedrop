@@ -40,6 +40,10 @@ builder.Services.AddScoped<ISettingsRepository, SettingsRepository>();
 builder.Services.AddScoped<IHealthService, HealthService>();
 builder.Services.AddScoped<IUploadPolicyService, UploadPolicyService>();
 builder.Services.AddScoped<IAdminAccessService, AdminAccessService>();
+builder.Services.AddScoped<IAdminUserRepository, AdminUserRepository>();
+builder.Services.AddScoped<IUploadManagerService, UploadManagerService>();
+builder.Services.AddScoped<IChunkedUploadService, ChunkedUploadService>();
+builder.Services.AddScoped<IDownloadNotificationService, DownloadNotificationService>();
 builder.Services.AddScoped<IReportRepository, ReportRepository>();
 builder.Services.AddScoped<IEmailTestService, EmailTestService>();
 builder.Services.AddScoped<IBrandingService, BrandingService>();
@@ -47,6 +51,8 @@ builder.Services.AddScoped<IEntraReadinessService, EntraReadinessService>();
 builder.Services.AddScoped<IProductionRepository, ProductionRepository>();
 builder.Services.AddScoped<IVirusScanService, VirusScanService>();
 builder.Services.AddScoped<IFileScanRepository, FileScanRepository>();
+builder.Services.AddScoped<IEnterpriseAuthorizationService, EnterpriseAuthorizationService>();
+builder.Services.AddScoped<IEntraValidationService, EntraValidationService>();
 
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
 builder.Services.Configure<IISServerOptions>(options => options.MaxRequestBodySize = null);
@@ -71,6 +77,12 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
 app.Run();
+
+
+
+
+
+
 
 
 

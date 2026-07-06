@@ -1,0 +1,112 @@
+﻿@model FileDrop.Web.Models.AuthorizationStatusViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a><a href="/Admin/AdminUsers">Admin Users</a><a href="/Admin/Uploads">Upload Manager</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a href="/Admin/Entra">Entra Readiness</a>
+        <a href="/Admin/Production">Production</a>
+        <a href="/Admin/Security">Security</a>
+        <a class="active" href="/Admin/Authorization">Authorization</a>
+        <a href="/">User Home</a>
+        <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Enterprise Authorization</h1>
+
+        @if (TempData["Message"] is not null)
+        {
+            <div class="notice">@TempData["Message"]</div>
+        }
+
+        <div class="metric-grid">
+            <div class="metric"><span>Mode</span><strong>@Model.Mode</strong></div>
+            <div class="metric"><span>Signed In</span><strong>@(Model.IsSignedIn ? "Yes" : "No")</strong></div>
+            <div class="metric"><span>Effective Roles</span><strong>@Model.EffectiveRoles.Count</strong></div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Configure Entra Groups</h2>
+            <form method="post" action="/Admin/Authorization/Save">
+                <label for="mode">Authorization Mode</label>
+                <select id="mode" name="mode">
+                    <option value="TemporaryAdminKey" selected="@(Model.Mode == "TemporaryAdminKey")">Temporary Admin Key</option>
+                    <option value="Hybrid" selected="@(Model.Mode == "Hybrid")">Hybrid</option>
+                    <option value="EntraGroups" selected="@(Model.Mode == "EntraGroups")">Entra Groups</option>
+                </select>
+
+                <label for="adminGroupObjectId">Administrator Group Object ID</label>
+                <input id="adminGroupObjectId" name="adminGroupObjectId" value="@Model.AdminGroupObjectId" />
+
+                <label for="auditorGroupObjectId">Auditor Group Object ID</label>
+                <input id="auditorGroupObjectId" name="auditorGroupObjectId" value="@Model.AuditorGroupObjectId" />
+
+                <label for="helpDeskGroupObjectId">Help Desk Group Object ID</label>
+                <input id="helpDeskGroupObjectId" name="helpDeskGroupObjectId" value="@Model.HelpDeskGroupObjectId" />
+
+                <div class="checkbox-card">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="requireAdminGroupForAdminPortal" value="true" @(Model.RequireAdminGroupForAdminPortal ? "checked" : "") />
+                        <span>
+                            <strong>Require Entra Admin Group for Admin Portal</strong>
+                            <small>Only enable after Microsoft sign-in and admin consent are fully working.</small>
+                        </span>
+                    </label>
+                    <input type="hidden" name="requireAdminGroupForAdminPortal" value="false" />
+                </div>
+
+                <button type="submit">Save Authorization Settings</button>
+            </form>
+        </div>
+
+        <div class="admin-card">
+            <h2>Current User</h2>
+            <table class="admin-table">
+                <tbody>
+                    <tr><th>User</th><td>@Model.UserName</td></tr>
+                    <tr><th>Email</th><td>@Model.UserEmail</td></tr>
+                    <tr><th>Effective Roles</th><td>@string.Join(", ", Model.EffectiveRoles)</td></tr>
+                    <tr><th>Group Claim Count</th><td>@Model.GroupClaims.Count</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="admin-card">
+            <h2>Recent Authorization Events</h2>
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>User</th>
+                        <th>Required Role</th>
+                        <th>Authorized</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var e in Model.RecentEvents)
+                {
+                    <tr>
+                        <td>@e.CreatedDate.ToLocalTime()</td>
+                        <td>@e.UserEmail</td>
+                        <td>@e.RequiredRole</td>
+                        <td><span class="badge @(e.Authorized ? "clean" : "failed")">@(e.Authorized ? "Yes" : "No")</span></td>
+                        <td>@e.Reason</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
+

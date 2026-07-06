@@ -851,3 +851,152 @@ button.danger { background: #9a1f1f; }
     background: #e9f1eb;
     color: #0f5f3f;
 }
+
+/* Phase 27 UI polish */
+.polished-header {
+    min-height: 118px;
+    display: flex;
+    align-items: center;
+    padding: 22px 42px;
+}
+
+.polished-brand {
+    gap: 18px;
+}
+
+.header-logo-white {
+    max-width: 96px;
+    max-height: 72px;
+    object-fit: contain;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    filter: brightness(0) invert(1);
+}
+
+.polished-header .brand {
+    font-size: 30px;
+    line-height: 1.1;
+}
+
+.polished-header .subbrand {
+    font-size: 18px;
+    opacity: .95;
+}
+
+.polished-header .top-nav {
+    margin-left: auto;
+    display: flex;
+    gap: 22px;
+    align-items: center;
+}
+
+.polished-header .top-nav a,
+.polished-header .top-nav span {
+    color: white;
+    font-weight: 700;
+    text-decoration: none;
+}
+
+.polished-header .top-nav a:hover {
+    text-decoration: underline;
+}
+
+.feature-grid {
+    max-width: 1220px;
+    margin: 24px auto 48px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px;
+}
+
+.feature-card {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 22px;
+    box-shadow: 0 10px 32px rgba(0,0,0,.05);
+}
+
+.feature-icon {
+    width: 58px;
+    height: 42px;
+    border-radius: 999px;
+    background: #e9f1eb;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 800;
+    color: #0f5f3f;
+    margin-bottom: 12px;
+}
+
+.feature-card h3 {
+    margin: 0 0 10px;
+}
+
+.feature-card p {
+    color: var(--muted);
+    margin: 0;
+}
+
+@media (max-width: 1000px) {
+    .feature-grid {
+        grid-template-columns: repeat(2, 1fr);
+        margin-left: 18px;
+        margin-right: 18px;
+    }
+
+    .polished-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .polished-header .top-nav {
+        margin-left: 0;
+        margin-top: 18px;
+        flex-wrap: wrap;
+    }
+}
+
+@media (max-width: 600px) {
+    .feature-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .polished-header .brand {
+        font-size: 24px;
+    }
+}
+
+.signed-in-banner {
+    margin: 0 0 18px;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-left: 5px solid var(--green);
+    border-radius: 10px;
+    background: #f4fbf6;
+    color: #0f5f3f;
+}
+
+.signed-in-banner strong {
+    display: block;
+    margin-bottom: 4px;
+}
+
+.signed-in-banner span {
+    display: block;
+    color: var(--muted);
+    font-size: 14px;
+}
+.upload-progress-list { display: grid; gap: 12px; margin: 14px 0 18px; }
+.upload-progress-row { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: #fbfdfb; }
+.upload-progress-title { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.progress-shell { height: 12px; border-radius: 999px; background: #e5ece7; overflow: hidden; }
+.progress-fill { height: 100%; width: 0%; background: var(--green); transition: width .2s ease; }
+.upload-progress-detail { margin-top: 8px; color: var(--muted); font-size: 14px; }
+
+.phase33-auto-send-note {
+    color: var(--muted);
+    font-size: 14px;
+}

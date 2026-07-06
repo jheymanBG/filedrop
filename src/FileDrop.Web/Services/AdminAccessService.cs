@@ -1,5 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using System.Security.Claims;
+using Dapper;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
+using Microsoft.Data.SqlClient;
 
 namespace FileDrop.Web.Services;
 
@@ -13,65 +17,57 @@ public interface IAdminAccessService
 
 public sealed class AdminAccessService : IAdminAccessService
 {
-    private const string SessionCookie = "FileDropAdminAccess";
-    private readonly ISettingsRepository _settings;
+    private readonly string _connectionString;
 
-    public AdminAccessService(ISettingsRepository settings)
+    public AdminAccessService(IConfiguration config)
     {
-        _settings = settings;
+        _connectionString = config.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("DefaultConnection missing.");
     }
 
     public async Task<bool> HasAccessAsync(HttpContext context)
     {
-        if (context.User?.Identity?.IsAuthenticated == true)
-        {
-            // Once Entra is approved, authenticated users can be combined with roles/groups.
-            // For now, still require the local admin cookie unless the app admin chooses otherwise later.
-        }
-
-        if (!context.Request.Cookies.TryGetValue(SessionCookie, out var value))
+        if (context.User?.Identity?.IsAuthenticated != true)
         {
             return false;
         }
 
-        return await VerifyKeyAsync(value);
-    }
-
-    public async Task GrantAccessAsync(HttpContext context)
-    {
-        var key = await _settings.GetValueAsync("Security.AdminAccessKey");
-        var hours = await _settings.GetIntAsync("Security.AdminSessionHours", 8);
-
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            throw new InvalidOperationException("Security.AdminAccessKey is not configured.");
-        }
-
-        context.Response.Cookies.Append(SessionCookie, key, new CookieOptions
-        {
-            HttpOnly = true,
-            SameSite = SameSiteMode.Lax,
-            Secure = context.Request.IsHttps,
-            Expires = DateTimeOffset.Now.AddHours(hours)
-        });
-    }
-
-    public async Task<bool> VerifyKeyAsync(string? key)
-    {
-        if (string.IsNullOrWhiteSpace(key))
+        var email = GetEmail(context.User);
+        if (string.IsNullOrWhiteSpace(email))
         {
             return false;
         }
 
-        var configured = await _settings.GetValueAsync("Security.AdminAccessKey");
-        return !string.IsNullOrWhiteSpace(configured) &&
-               string.Equals(configured, key, StringComparison.Ordinal);
+        await using var db = new SqlConnection(_connectionString);
+
+        var assignedCount = await db.ExecuteScalarAsync<int>("SELECT COUNT(*) FROM dbo.FileDropAdminUsers WHERE IsActive = 1");
+
+        if (assignedCount == 0)
+        {
+            return true;
+        }
+
+        var isAdmin = await db.ExecuteScalarAsync<int>("""
+            SELECT COUNT(*)
+            FROM dbo.FileDropAdminUsers
+            WHERE IsActive = 1
+              AND LOWER(Email) = LOWER(@email)
+            """, new { email });
+
+        return isAdmin > 0;
     }
 
-    public Task SignOutAsync(HttpContext context)
+    public Task GrantAccessAsync(HttpContext context) => Task.CompletedTask;
+
+    public Task<bool> VerifyKeyAsync(string? key) => Task.FromResult(false);
+
+    public Task SignOutAsync(HttpContext context) => Task.CompletedTask;
+
+    private static string? GetEmail(ClaimsPrincipal user)
     {
-        context.Response.Cookies.Delete(SessionCookie);
-        return Task.CompletedTask;
+        return user.FindFirstValue("preferred_username") ??
+               user.FindFirstValue(ClaimTypes.Email) ??
+               user.FindFirstValue("upn") ??
+               user.Identity?.Name;
     }
 }
 
@@ -80,12 +76,23 @@ public sealed class RequireAdminAccessAttribute : Attribute, IAsyncAuthorization
 {
     public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {
-        var access = context.HttpContext.RequestServices.GetRequiredService<IAdminAccessService>();
+        var http = context.HttpContext;
 
-        if (!await access.HasAccessAsync(context.HttpContext))
+        if (http.User?.Identity?.IsAuthenticated != true)
         {
-            var returnUrl = context.HttpContext.Request.Path + context.HttpContext.Request.QueryString;
-            context.Result = new RedirectToActionResult("Login", "AdminAccess", new { returnUrl });
+            var returnUrl = http.Request.Path + http.Request.QueryString;
+            context.Result = new ChallengeResult(OpenIdConnectDefaults.AuthenticationScheme, new Microsoft.AspNetCore.Authentication.AuthenticationProperties
+            {
+                RedirectUri = returnUrl
+            });
+            return;
+        }
+
+        var access = http.RequestServices.GetRequiredService<IAdminAccessService>();
+
+        if (!await access.HasAccessAsync(http))
+        {
+            context.Result = new RedirectToActionResult("AccessDenied", "AdminAccess", null);
         }
     }
 }

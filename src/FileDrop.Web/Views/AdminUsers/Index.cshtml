@@ -1,0 +1,90 @@
+﻿@model FileDrop.Web.Models.AdminUsersViewModel
+
+<section class="admin-shell">
+    <aside class="admin-nav">
+        <h2>FileDrop Admin</h2>
+        <a href="/Admin">Dashboard</a>
+        <a href="/Admin/Transfers">Transfers</a>
+        <a href="/Admin/Audit">Audit Log</a>
+        <a href="/Admin/Health">Health</a>
+        <a href="/Admin/Settings">Settings</a>
+        <a href="/Admin/AdminUsers" class="active">Admin Users</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a href="/Admin/Entra">Entra Readiness</a>
+        <a href="/Admin/EntraValidation">Entra Validation</a>
+        <a href="/Admin/Production">Production</a>
+        <a href="/Admin/Security">Security</a>
+        <a href="/Admin/Authorization">Authorization</a>
+        <a href="/">User Home</a>
+    </aside>
+
+    <div class="admin-main">
+        <h1>Admin Users</h1>
+
+        @if (TempData["Message"] is not null)
+        {
+            <div class="notice">@TempData["Message"]</div>
+        }
+
+        <div class="admin-card">
+            <h2>Add Administrator</h2>
+            <form method="post" action="/Admin/AdminUsers/Add">
+                <label for="email">Email</label>
+                <input id="email" name="email" type="email" placeholder="user@bgohio.gov" required />
+
+                <label for="displayName">Display Name</label>
+                <input id="displayName" name="displayName" placeholder="User name" />
+
+                <label for="roleName">Role</label>
+                <select id="roleName" name="roleName">
+                    <option value="Administrator">Administrator</option>
+                    <option value="Auditor">Auditor</option>
+                    <option value="HelpDesk">Help Desk</option>
+                </select>
+
+                <button type="submit">Save Admin User</button>
+            </form>
+        </div>
+
+        <div class="admin-card">
+            <h2>Assigned Admins</h2>
+            <table class="admin-table">
+                <thead>
+                    <tr><th>Email</th><th>Name</th><th>Role</th><th>Status</th><th>Modified</th><th></th></tr>
+                </thead>
+                <tbody>
+                @foreach (var user in Model.Users)
+                {
+                    <tr>
+                        <td>@user.Email</td>
+                        <td>@user.DisplayName</td>
+                        <td>@user.RoleName</td>
+                        <td><span class="badge @(user.IsActive ? "clean" : "failed")">@(user.IsActive ? "Active" : "Disabled")</span></td>
+                        <td>@user.ModifiedDate.ToLocalTime()</td>
+                        <td>
+                            @if (user.IsActive)
+                            {
+                                <form method="post" action="/Admin/AdminUsers/Disable">
+                                    <input type="hidden" name="adminUserId" value="@user.AdminUserId" />
+                                    <button type="submit" class="danger">Disable</button>
+                                </form>
+                            }
+                            else
+                            {
+                                <form method="post" action="/Admin/AdminUsers/Enable">
+                                    <input type="hidden" name="adminUserId" value="@user.AdminUserId" />
+                                    <button type="submit">Enable</button>
+                                </form>
+                            }
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</section>
+
