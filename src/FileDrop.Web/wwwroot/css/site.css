@@ -1000,3 +1000,68 @@ button.danger { background: #9a1f1f; }
     color: var(--muted);
     font-size: 14px;
 }
+/* v0.8.0 Production Upload Engine UI additions. Append this block to the existing site.css if you do not replace the full file. */
+.hidden-file-input { display: none; }
+.drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    padding: 32px 24px;
+    background: #fbfdfb;
+    text-align: center;
+    cursor: pointer;
+    display: grid;
+    gap: 8px;
+    transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+.drop-zone:hover,
+.drop-zone.dragover {
+    border-color: var(--green);
+    background: #f1f8f3;
+    transform: translateY(-1px);
+}
+.drop-zone-icon {
+    width: 80px;
+    height: 40px;
+    border-radius: 999px;
+    background: #e9f1eb;
+    color: #0f5f3f;
+    font-size: 12px;
+    font-weight: 800;
+    display: grid;
+    place-items: center;
+    margin: 0 auto 6px;
+}
+.drop-zone span { color: var(--muted); }
+.upload-summary {
+    margin: 14px 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: white;
+    color: var(--muted);
+}
+.hidden { display: none !important; }
+.upload-progress-list { display: grid; gap: 12px; margin: 14px 0 18px; }
+.upload-progress-row { border: 1px solid var(--border); border-radius: 12px; padding: 14px; background: #fbfdfb; }
+.upload-progress-row.queued { opacity: .85; }
+.upload-progress-row.complete { border-color: #a9d8b8; background: #f3fbf5; }
+.upload-progress-title { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.upload-progress-title strong { overflow-wrap: anywhere; }
+.progress-shell { height: 12px; border-radius: 999px; background: #e5ece7; overflow: hidden; }
+.progress-fill { height: 100%; width: 0%; background: var(--green); transition: width .2s ease; }
+.upload-progress-detail { margin-top: 8px; color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.button-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.secondary-button { background: #eef3ef !important; color: #193b26 !important; }
+.validation-summary:not(:empty) {
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid #e8b8b8;
+    background: #fff4f4;
+    color: #8a1f1f;
+}
+@media (max-width: 700px) {
+    .drop-zone { padding: 24px 16px; }
+    .upload-progress-title { display: grid; }
+    .upload-progress-detail { display: grid; }
+}

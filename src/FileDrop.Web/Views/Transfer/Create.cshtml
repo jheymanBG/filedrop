@@ -1,8 +1,8 @@
-﻿<section class="card transfer-card">
+<section class="card transfer-card">
     <a class="back-link" href="/">Back</a>
 
     <h1>New Transfer</h1>
-    <p class="muted">Send secure files from the GIS Department.</p>
+    <p class="muted">Send secure files using FileDrop Enterprise.</p>
 
     <div class="signed-in-banner">
         <strong>Microsoft 365 authenticated</strong>
@@ -11,15 +11,15 @@
 
     <form method="post" action="/Transfer/Create" id="transferForm">
         @Html.AntiForgeryToken()
-
         <input type="hidden" name="UploadedIds" id="UploadedIds" />
+
+        <div asp-validation-summary="All" class="validation-summary"></div>
 
         <div class="grid two">
             <div>
                 <label for="RecipientEmail">Recipient Email</label>
                 <input name="RecipientEmail" id="RecipientEmail" type="email" placeholder="recipient@example.com" required />
             </div>
-
             <div>
                 <label for="ExpirationDays">Link Valid For</label>
                 <div class="inline-field">
@@ -46,7 +46,6 @@
                     </span>
                 </label>
             </div>
-
             <div>
                 <label for="MaxDownloads">Maximum Downloads</label>
                 <input name="MaxDownloads" id="MaxDownloads" type="number" min="1" placeholder="Unlimited" />
@@ -55,160 +54,27 @@
         </div>
 
         <div class="policy-note">
-            <strong>Chunked Uploads</strong><br />
-            Large files are uploaded in chunks with live progress. After the upload completes, FileDrop will automatically send the transfer.
+            <strong>v0.8.0 Production Upload Engine</strong><br />
+            Drag files below. Uploads are chunked, resumable, queued, and finalized automatically before the transfer email is sent.
         </div>
 
-        <label for="files">Files</label>
-        <input id="files" type="file" multiple required />
+        <label>Files</label>
+        <div id="dropZone" class="drop-zone" role="button" tabindex="0">
+            <div class="drop-zone-icon">UPLOAD</div>
+            <strong>Drag files here or click to browse</strong>
+            <span>Multiple files supported. Large files resume if the browser is refreshed before completion.</span>
+        </div>
+        <input id="files" type="file" multiple class="hidden-file-input" />
 
+        <div id="uploadSummary" class="upload-summary hidden"></div>
         <div id="uploadProgress" class="upload-progress-list"></div>
 
-        <button id="uploadButton" type="button">Upload and Send</button>
-        <button id="createButton" type="submit" disabled style="display:none;">Create Transfer</button>
+        <div class="button-row">
+            <button id="uploadButton" type="button">Upload and Send</button>
+            <button id="clearUploadButton" type="button" class="secondary-button">Clear Files</button>
+            <button id="createButton" type="submit" disabled style="display:none;">Create Transfer</button>
+        </div>
     </form>
 </section>
 
-<script>
-(() => {
-    const chunkSize = 10 * 1024 * 1024;
-    const filesInput = document.getElementById('files');
-    const progressList = document.getElementById('uploadProgress');
-    const uploadButton = document.getElementById('uploadButton');
-    const createButton = document.getElementById('createButton');
-    const uploadedIds = document.getElementById('UploadedIds');
-    const completedUploadIds = [];
-
-    function addProgressRow(file) {
-        const row = document.createElement('div');
-        row.className = 'upload-progress-row';
-        row.innerHTML = `
-            <div class="upload-progress-title">
-                <strong>${escapeHtml(file.name)}</strong>
-                <span>0%</span>
-            </div>
-            <div class="progress-shell"><div class="progress-fill"></div></div>
-            <div class="upload-progress-detail">Waiting...</div>
-        `;
-        progressList.appendChild(row);
-        return row;
-    }
-
-    function setProgress(row, percent, detail) {
-        row.querySelector('.progress-fill').style.width = percent + '%';
-        row.querySelector('.upload-progress-title span').textContent = Number(percent).toFixed(1) + '%';
-        row.querySelector('.upload-progress-detail').textContent = detail;
-    }
-
-    async function uploadFile(file) {
-        const row = addProgressRow(file);
-
-        setProgress(row, 0, 'Starting upload...');
-
-        const start = await fetch('/Upload/Start', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                fileName: file.name,
-                contentType: file.type || 'application/octet-stream',
-                totalBytes: file.size,
-                chunkSizeBytes: chunkSize
-            })
-        });
-
-        if (!start.ok) {
-            const err = await start.json().catch(() => ({ error: 'Could not start upload.' }));
-            throw new Error(err.error || 'Could not start upload.');
-        }
-
-        const session = await start.json();
-
-        for (let i = 0; i < session.totalChunks; i++) {
-            const startByte = i * session.chunkSizeBytes;
-            const endByte = Math.min(startByte + session.chunkSizeBytes, file.size);
-            const blob = file.slice(startByte, endByte);
-
-            const form = new FormData();
-            form.append('chunk', blob, file.name + '.part');
-
-            const response = await fetch(`/Upload/Chunk?uploadId=${session.uploadId}&chunkIndex=${i}`, {
-                method: 'POST',
-                body: form
-            });
-
-            if (!response.ok) {
-                const err = await response.json().catch(() => ({ error: 'Chunk upload failed.' }));
-                throw new Error(err.error || 'Chunk upload failed.');
-            }
-
-            const status = await response.json();
-            setProgress(row, status.percent, `Uploaded ${status.chunksReceived} of ${status.totalChunks} chunks`);
-        }
-
-        setProgress(row, 99.5, 'Finalizing file...');
-
-        const complete = await fetch('/Upload/Complete', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uploadId: session.uploadId })
-        });
-
-        if (!complete.ok) {
-            const err = await complete.json().catch(() => ({ error: 'Could not finalize upload.' }));
-            throw new Error(err.error || 'Could not finalize upload.');
-        }
-
-        const finalStatus = await complete.json();
-        completedUploadIds.push(finalStatus.uploadId);
-        uploadedIds.value = completedUploadIds.join(',');
-
-        setProgress(row, 100, 'Upload complete');
-    }
-
-    uploadButton.addEventListener('click', async () => {
-        const files = Array.from(filesInput.files || []);
-        if (files.length === 0) {
-            alert('Choose one or more files first.');
-            return;
-        }
-
-        uploadButton.disabled = true;
-        createButton.disabled = true;
-        progressList.innerHTML = '';
-        completedUploadIds.length = 0;
-        uploadedIds.value = '';
-
-        try {
-            for (const file of files) {
-                await uploadFile(file);
-            }
-
-            createButton.disabled = false;
-            uploadButton.textContent = 'Sending...';
-            document.getElementById('transferForm').submit();
-        } catch (err) {
-            alert(err.message || err);
-            uploadButton.disabled = false;
-            uploadButton.textContent = 'Retry Upload';
-        }
-    });
-
-    document.getElementById('transferForm').addEventListener('submit', (e) => {
-        if (!uploadedIds.value) {
-            e.preventDefault();
-            alert('Upload files first.');
-        }
-    });
-
-    function escapeHtml(value) {
-        return value
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#039;');
-    }
-})();
-</script>
-
-
+<script src="~/js/upload.js" asp-append-version="true"></script>

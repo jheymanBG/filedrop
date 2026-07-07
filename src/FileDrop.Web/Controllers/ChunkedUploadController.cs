@@ -1,4 +1,4 @@
-﻿using FileDrop.Web.Models;
+using FileDrop.Web.Models;
 using FileDrop.Web.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,10 +9,12 @@ namespace FileDrop.Web.Controllers;
 public sealed class ChunkedUploadController : Controller
 {
     private readonly IChunkedUploadService _chunks;
+    private readonly ILogger<ChunkedUploadController> _logger;
 
-    public ChunkedUploadController(IChunkedUploadService chunks)
+    public ChunkedUploadController(IChunkedUploadService chunks, ILogger<ChunkedUploadController> logger)
     {
         _chunks = chunks;
+        _logger = logger;
     }
 
     [HttpPost("/Upload/Start")]
@@ -24,6 +26,7 @@ public sealed class ChunkedUploadController : Controller
         }
         catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Could not start chunked upload for {FileName}", request.FileName);
             return BadRequest(new { error = ex.Message });
         }
     }
@@ -31,7 +34,7 @@ public sealed class ChunkedUploadController : Controller
     [HttpPost("/Upload/Chunk")]
     [RequestSizeLimit(60L * 1024L * 1024L)]
     [RequestFormLimits(MultipartBodyLengthLimit = 60L * 1024L * 1024L)]
-    public async Task<IActionResult> Chunk(Guid uploadId, int chunkIndex, IFormFile chunk, CancellationToken cancellationToken)
+    public async Task<IActionResult> Chunk(Guid uploadId, int chunkIndex, string? chunkSha256, IFormFile chunk, CancellationToken cancellationToken)
     {
         try
         {
@@ -40,10 +43,11 @@ public sealed class ChunkedUploadController : Controller
                 return BadRequest(new { error = "Chunk is missing." });
             }
 
-            return Json(await _chunks.SaveChunkAsync(uploadId, chunkIndex, chunk, cancellationToken));
+            return Json(await _chunks.SaveChunkAsync(uploadId, chunkIndex, chunk, chunkSha256, cancellationToken));
         }
         catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Chunk upload failed. UploadId={UploadId}; ChunkIndex={ChunkIndex}", uploadId, chunkIndex);
             return BadRequest(new { error = ex.Message });
         }
     }
@@ -57,6 +61,7 @@ public sealed class ChunkedUploadController : Controller
         }
         catch (Exception ex)
         {
+            _logger.LogWarning(ex, "Could not complete chunked upload. UploadId={UploadId}", request.UploadId);
             return BadRequest(new { error = ex.Message });
         }
     }

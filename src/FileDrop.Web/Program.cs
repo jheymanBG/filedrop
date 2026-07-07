@@ -1,4 +1,4 @@
-﻿using FileDrop.Web.Services;
+using FileDrop.Web.Services;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
@@ -53,6 +53,7 @@ builder.Services.AddScoped<IVirusScanService, VirusScanService>();
 builder.Services.AddScoped<IFileScanRepository, FileScanRepository>();
 builder.Services.AddScoped<IEnterpriseAuthorizationService, EnterpriseAuthorizationService>();
 builder.Services.AddScoped<IEntraValidationService, EntraValidationService>();
+builder.Services.AddHostedService<ChunkedUploadCleanupHostedService>();
 
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
 builder.Services.Configure<IISServerOptions>(options => options.MaxRequestBodySize = null);
