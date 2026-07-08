@@ -35,3 +35,23 @@ public sealed class DownloadViewModel
     public List<TransferFileRecord> Files { get; set; } = new();
 }
 
+public sealed class CreateTransferFromUploadsRequest
+{
+    public List<Guid> UploadedIds { get; set; } = new();
+    public string RecipientEmail { get; set; } = "";
+    public string? Subject { get; set; }
+    public string? Message { get; set; }
+    public int ExpirationDays { get; set; } = 7;
+    public int? MaxDownloads { get; set; }
+    public bool DisableAfterFirstDownload { get; set; }
+}
+
+public sealed class CreateTransferFromUploadsResponse
+{
+    public bool Success { get; set; }
+    public Guid TransferId { get; set; }
+    public string DownloadToken { get; set; } = "";
+    public string DownloadLink { get; set; } = "";
+    public string RedirectUrl { get; set; } = "";
+    public int FileCount { get; set; }
+}

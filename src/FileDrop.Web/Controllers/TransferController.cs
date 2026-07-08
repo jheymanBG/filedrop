@@ -19,6 +19,8 @@ public sealed class TransferController : Controller
     private readonly IFileScanRepository _scanRepo;
     private readonly IChunkedUploadService _chunkedUploads;
     private readonly IUploadPolicyService _uploadPolicy;
+    private readonly IDownloadNotificationService _downloadNotifications;
+    private readonly ITransferNotificationService _transferNotifications;
     private readonly ILogger<TransferController> _logger;
 
     public TransferController(
@@ -32,6 +34,8 @@ public sealed class TransferController : Controller
         IFileScanRepository scanRepo,
         IChunkedUploadService chunkedUploads,
         IUploadPolicyService uploadPolicy,
+        IDownloadNotificationService downloadNotifications,
+        ITransferNotificationService transferNotifications,
         ILogger<TransferController> logger)
     {
         _config = config;
@@ -44,6 +48,8 @@ public sealed class TransferController : Controller
         _scanRepo = scanRepo;
         _chunkedUploads = chunkedUploads;
         _uploadPolicy = uploadPolicy;
+        _downloadNotifications = downloadNotifications;
+        _transferNotifications = transferNotifications;
         _logger = logger;
     }
 
@@ -79,32 +85,18 @@ public sealed class TransferController : Controller
                 .Distinct()
                 .ToList();
 
-            var completedChunkFiles = await _chunkedUploads.GetCompletedAsync(uploadedIds);
-            var files = form.Files.Where(f => f.Length > 0).ToList();
-
-            _logger.LogInformation("Transfer POST received. User={User}; ChunkedFiles={ChunkedCount}; FormFiles={FormFileCount}; ContentLength={ContentLength}",
-                User?.Identity?.Name, completedChunkFiles.Count, files.Count, Request.ContentLength);
-
             if (!int.TryParse(expirationText, out var expirationDays))
             {
                 expirationDays = _config.GetValue<int>("Transfers:DefaultExpirationDays", 7);
             }
 
-            var maxDays = _config.GetValue<int>("Transfers:MaximumExpirationDays", 30);
-            if (expirationDays < 1 || expirationDays > maxDays)
-            {
-                ModelState.AddModelError("ExpirationDays", $"Expiration must be between 1 and {maxDays} days.");
-            }
+            var files = form.Files.Where(f => f.Length > 0).ToList();
+            var completedChunkFiles = await _chunkedUploads.GetCompletedAsync(uploadedIds);
 
-            if (string.IsNullOrWhiteSpace(recipientEmail))
-            {
-                ModelState.AddModelError("RecipientEmail", "Recipient email is required.");
-            }
+            _logger.LogWarning("PHASE37 Transfer/Create POST received. User={User}; UploadedIdsRaw={UploadedIdsRaw}; UploadedIdsParsed={UploadedIds}; ChunkedFiles={ChunkedCount}; FormFiles={FormFileCount}; Recipient={Recipient}; Subject={Subject}; ContentLength={ContentLength}",
+                User?.Identity?.Name, form["UploadedIds"].ToString(), string.Join(',', uploadedIds), completedChunkFiles.Count, files.Count, recipientEmail, subject, Request.ContentLength);
 
-            if (maxDownloads is < 1)
-            {
-                ModelState.AddModelError("MaxDownloads", "Maximum downloads must be greater than zero.");
-            }
+            ValidateTransferInputs(recipientEmail, expirationDays, maxDownloads, files.Count + completedChunkFiles.Count);
 
             var isAuthenticated = User?.Identity?.IsAuthenticated == true;
             var requireMicrosoftLogin = (_config["Security:RequireMicrosoftLoginForUploads"] ?? "false").Equals("true", StringComparison.OrdinalIgnoreCase);
@@ -117,11 +109,6 @@ public sealed class TransferController : Controller
             if (!isAuthenticated && string.IsNullOrWhiteSpace(manualSenderEmail))
             {
                 ModelState.AddModelError("ManualSenderEmail", "Sender email is required while Microsoft sign-in is pending.");
-            }
-
-            if (files.Count == 0 && completedChunkFiles.Count == 0)
-            {
-                ModelState.AddModelError("Files", "At least one file is required.");
             }
 
             if (files.Count > 0)
@@ -143,120 +130,26 @@ public sealed class TransferController : Controller
                 return View();
             }
 
-            var senderEmail = isAuthenticated
-                ? (User.FindFirstValue("preferred_username") ?? User.FindFirstValue(ClaimTypes.Email) ?? User.Identity?.Name ?? "unknown@bgohio.gov")
-                : manualSenderEmail;
-
+            var senderEmail = isAuthenticated ? GetAuthenticatedUserEmail() : manualSenderEmail;
             var senderName = isAuthenticated
-                ? (User.FindFirstValue("name") ?? User.Identity?.Name ?? senderEmail)
+                ? GetAuthenticatedUserName(senderEmail)
                 : (string.IsNullOrWhiteSpace(manualSenderName) ? manualSenderEmail : manualSenderName);
 
-            var transfer = new TransferRecord
-            {
-                TransferId = Guid.NewGuid(),
-                SenderEmail = senderEmail,
-                SenderName = senderName,
-                RecipientEmail = recipientEmail,
-                Subject = subject,
-                Message = message,
-                DownloadToken = _tokens.CreateToken(),
-                ExpirationDate = DateTime.UtcNow.AddDays(expirationDays),
-                MaxDownloads = maxDownloads,
-                DisableAfterFirstDownload = disableAfterFirstDownload
-            };
-
-            var savedFiles = new List<TransferFileRecord>();
-
-            foreach (var completed in completedChunkFiles)
-            {
-                var fileId = Guid.NewGuid();
-                var acceptedPath = completed.StoragePath;
-                var scanHash = completed.Sha256Hash;
-
-                if (!System.IO.File.Exists(acceptedPath))
-                {
-                    ModelState.AddModelError("Files", $"{completed.OriginalFileName} is missing from storage.");
-                    return View();
-                }
-
-                var scanBlocked = await ScanAndRecordAsync(
-                    transfer.TransferId,
-                    fileId,
-                    completed.OriginalFileName,
-                    acceptedPath,
-                    scanHash,
-                    cancellationToken);
-
-                if (scanBlocked.blocked)
-                {
-                    ModelState.AddModelError("Files", $"{completed.OriginalFileName} failed security scanning and was not accepted.");
-                    await _audit.WriteAsync(transfer.TransferId, senderEmail, "Upload Blocked By Security Scan", $"{completed.OriginalFileName}; Result={scanBlocked.result}", HttpContext.Connection.RemoteIpAddress?.ToString());
-                    return View();
-                }
-
-                savedFiles.Add(new TransferFileRecord
-                {
-                    FileId = fileId,
-                    TransferId = transfer.TransferId,
-                    OriginalFileName = completed.OriginalFileName,
-                    StoredFileName = completed.StoredFileName,
-                    StoragePath = acceptedPath,
-                    ContentType = string.IsNullOrWhiteSpace(completed.ContentType) ? "application/octet-stream" : completed.ContentType,
-                    FileSizeBytes = completed.FileSizeBytes,
-                    Sha256Hash = completed.Sha256Hash
-                });
-            }
-
-            foreach (var file in files)
-            {
-                var saved = await _storage.SaveFileAsync(file, transfer.TransferId, cancellationToken);
-                var fileId = Guid.NewGuid();
-                var originalName = Path.GetFileName(file.FileName);
-
-                var scanBlocked = await ScanAndRecordAsync(
-                    transfer.TransferId,
-                    fileId,
-                    originalName,
-                    saved.storagePath,
-                    saved.sha256,
-                    cancellationToken);
-
-                if (scanBlocked.blocked)
-                {
-                    ModelState.AddModelError("Files", $"{originalName} failed security scanning and was not accepted.");
-                    await _audit.WriteAsync(transfer.TransferId, senderEmail, "Upload Blocked By Security Scan", $"{originalName}; Result={scanBlocked.result}", HttpContext.Connection.RemoteIpAddress?.ToString());
-                    return View();
-                }
-
-                savedFiles.Add(new TransferFileRecord
-                {
-                    FileId = fileId,
-                    TransferId = transfer.TransferId,
-                    OriginalFileName = originalName,
-                    StoredFileName = saved.storedFileName,
-                    StoragePath = saved.storagePath,
-                    ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
-                    FileSizeBytes = file.Length,
-                    Sha256Hash = saved.sha256
-                });
-            }
-
-            await _repo.CreateTransferAsync(transfer, savedFiles);
-
-            var downloadLink = Url.Action("Download", "Transfer", new { id = transfer.DownloadToken }, Request.Scheme)
-                ?? $"/Transfer/Download/{transfer.DownloadToken}";
-
-            await _email.SendTransferCreatedAsync(transfer, savedFiles, downloadLink);
-
-            await _audit.WriteAsync(
-                transfer.TransferId,
+            var result = await CreateTransferAsync(
                 senderEmail,
-                "Transfer Created",
-                $"Recipient={recipientEmail}; Files={savedFiles.Count}; Subject={subject}",
-                HttpContext.Connection.RemoteIpAddress?.ToString());
+                senderName,
+                recipientEmail,
+                subject,
+                message,
+                expirationDays,
+                maxDownloads,
+                disableAfterFirstDownload,
+                completedChunkFiles,
+                files,
+                cancellationToken);
 
-            ViewBag.DownloadLink = downloadLink;
-            return View("Created", transfer);
+            ViewBag.DownloadLink = result.downloadLink;
+            return View("Created", result.transfer);
         }
         catch (Exception ex)
         {
@@ -264,6 +157,89 @@ public sealed class TransferController : Controller
             ModelState.AddModelError("", ex.Message);
             return View();
         }
+    }
+
+    [Authorize]
+    [HttpPost("/Transfer/CreateFromUploads")]
+    [IgnoreAntiforgeryToken]
+    public async Task<IActionResult> CreateFromUploads([FromBody] CreateTransferFromUploadsRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (request is null)
+            {
+                return BadRequest(new { error = "Transfer request was empty." });
+            }
+
+            request.UploadedIds = request.UploadedIds.Where(x => x != Guid.Empty).Distinct().ToList();
+            var completedChunkFiles = await _chunkedUploads.GetCompletedAsync(request.UploadedIds);
+
+            _logger.LogInformation("CreateFromUploads received. User={User}; UploadedIds={UploadedIds}; CompletedFiles={CompletedCount}; Recipient={Recipient}",
+                User?.Identity?.Name, string.Join(',', request.UploadedIds), completedChunkFiles.Count, request.RecipientEmail);
+
+            if (request.UploadedIds.Count == 0)
+            {
+                return BadRequest(new { error = "No completed upload IDs were posted to the transfer pipeline." });
+            }
+
+            if (completedChunkFiles.Count != request.UploadedIds.Count)
+            {
+                return BadRequest(new
+                {
+                    error = $"Only {completedChunkFiles.Count} of {request.UploadedIds.Count} uploaded file(s) are complete. Refresh the page and retry the upload."
+                });
+            }
+
+            var validationErrors = ValidateTransferRequest(request, completedChunkFiles.Count);
+            if (validationErrors.Count > 0)
+            {
+                return BadRequest(new { error = string.Join(" ", validationErrors), errors = validationErrors });
+            }
+
+            var senderEmail = GetAuthenticatedUserEmail();
+            var senderName = GetAuthenticatedUserName(senderEmail);
+
+            var result = await CreateTransferAsync(
+                senderEmail,
+                senderName,
+                request.RecipientEmail.Trim(),
+                request.Subject,
+                request.Message,
+                request.ExpirationDays,
+                request.MaxDownloads,
+                request.DisableAfterFirstDownload,
+                completedChunkFiles,
+                Array.Empty<IFormFile>(),
+                cancellationToken);
+
+            return Json(new CreateTransferFromUploadsResponse
+            {
+                Success = true,
+                TransferId = result.transfer.TransferId,
+                DownloadToken = result.transfer.DownloadToken,
+                DownloadLink = result.downloadLink,
+                RedirectUrl = Url.Action("Created", "Transfer", new { id = result.transfer.DownloadToken }) ?? $"/Transfer/Created/{result.transfer.DownloadToken}",
+                FileCount = result.files.Count
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "CreateFromUploads failed.");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { error = ex.Message });
+        }
+    }
+
+    [Authorize]
+    [HttpGet("/Transfer/Created/{id}")]
+    public async Task<IActionResult> Created(string id)
+    {
+        var result = await _repo.GetByTokenAsync(id);
+        if (result.transfer is null) return NotFound("Transfer not found.");
+
+        ViewBag.DownloadLink = Url.Action("Download", "Transfer", new { id = result.transfer.DownloadToken }, Request.Scheme)
+            ?? $"/Transfer/Download/{result.transfer.DownloadToken}";
+
+        return View("Created", result.transfer);
     }
 
     [AllowAnonymous]
@@ -294,6 +270,7 @@ public sealed class TransferController : Controller
 
         await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail, "File Downloaded", file.OriginalFileName, remoteIp);
         await _email.SendDownloadNotificationAsync(result.transfer, result.files, file.OriginalFileName, remoteIp);
+        await _downloadNotifications.NotifySenderAsync(result.transfer.TransferId, file.OriginalFileName, HttpContext);
 
         return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream", file.OriginalFileName);
     }
@@ -316,6 +293,7 @@ public sealed class TransferController : Controller
         await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail, "Download All ZIP", $"Files={result.files.Count}; Zip={zipName}", remoteIp);
         await _repo.MarkDownloadedAsync(result.transfer.TransferId);
         await _email.SendDownloadNotificationAsync(result.transfer, result.files, $"Download All ZIP: {zipName}", remoteIp);
+        await _downloadNotifications.NotifySenderAsync(result.transfer.TransferId, $"Download All ZIP: {zipName}", HttpContext);
 
         return new FileCallbackResult("application/zip", async (output, _) =>
         {
@@ -333,6 +311,186 @@ public sealed class TransferController : Controller
         {
             FileDownloadName = zipName
         };
+    }
+
+    private async Task<(TransferRecord transfer, List<TransferFileRecord> files, string downloadLink)> CreateTransferAsync(
+        string senderEmail,
+        string? senderName,
+        string recipientEmail,
+        string? subject,
+        string? message,
+        int expirationDays,
+        int? maxDownloads,
+        bool disableAfterFirstDownload,
+        IReadOnlyList<ChunkedUploadedFile> completedChunkFiles,
+        IReadOnlyList<IFormFile> directFiles,
+        CancellationToken cancellationToken)
+    {
+        var transfer = new TransferRecord
+        {
+            TransferId = Guid.NewGuid(),
+            SenderEmail = senderEmail,
+            SenderName = senderName,
+            RecipientEmail = recipientEmail,
+            Subject = subject,
+            Message = message,
+            DownloadToken = _tokens.CreateToken(),
+            ExpirationDate = DateTime.UtcNow.AddDays(expirationDays),
+            MaxDownloads = maxDownloads,
+            DisableAfterFirstDownload = disableAfterFirstDownload
+        };
+
+        var savedFiles = new List<TransferFileRecord>();
+
+        foreach (var completed in completedChunkFiles)
+        {
+            var fileId = Guid.NewGuid();
+            var acceptedPath = completed.StoragePath;
+
+            if (string.IsNullOrWhiteSpace(acceptedPath) || !System.IO.File.Exists(acceptedPath))
+            {
+                throw new InvalidOperationException($"{completed.OriginalFileName} completed upload session is missing from storage.");
+            }
+
+            var scanBlocked = await ScanAndRecordAsync(
+                transfer.TransferId,
+                fileId,
+                completed.OriginalFileName,
+                acceptedPath,
+                completed.Sha256Hash,
+                cancellationToken);
+
+            if (scanBlocked.blocked)
+            {
+                await _audit.WriteAsync(transfer.TransferId, senderEmail, "Upload Blocked By Security Scan", $"{completed.OriginalFileName}; Result={scanBlocked.result}", HttpContext.Connection.RemoteIpAddress?.ToString());
+                throw new InvalidOperationException($"{completed.OriginalFileName} failed security scanning and was not accepted.");
+            }
+
+            savedFiles.Add(new TransferFileRecord
+            {
+                FileId = fileId,
+                TransferId = transfer.TransferId,
+                OriginalFileName = completed.OriginalFileName,
+                StoredFileName = completed.StoredFileName,
+                StoragePath = acceptedPath,
+                ContentType = string.IsNullOrWhiteSpace(completed.ContentType) ? "application/octet-stream" : completed.ContentType,
+                FileSizeBytes = completed.FileSizeBytes,
+                Sha256Hash = completed.Sha256Hash
+            });
+        }
+
+        foreach (var file in directFiles)
+        {
+            var saved = await _storage.SaveFileAsync(file, transfer.TransferId, cancellationToken);
+            var fileId = Guid.NewGuid();
+            var originalName = Path.GetFileName(file.FileName);
+
+            var scanBlocked = await ScanAndRecordAsync(
+                transfer.TransferId,
+                fileId,
+                originalName,
+                saved.storagePath,
+                saved.sha256,
+                cancellationToken);
+
+            if (scanBlocked.blocked)
+            {
+                await _audit.WriteAsync(transfer.TransferId, senderEmail, "Upload Blocked By Security Scan", $"{originalName}; Result={scanBlocked.result}", HttpContext.Connection.RemoteIpAddress?.ToString());
+                throw new InvalidOperationException($"{originalName} failed security scanning and was not accepted.");
+            }
+
+            savedFiles.Add(new TransferFileRecord
+            {
+                FileId = fileId,
+                TransferId = transfer.TransferId,
+                OriginalFileName = originalName,
+                StoredFileName = saved.storedFileName,
+                StoragePath = saved.storagePath,
+                ContentType = string.IsNullOrWhiteSpace(file.ContentType) ? "application/octet-stream" : file.ContentType,
+                FileSizeBytes = file.Length,
+                Sha256Hash = saved.sha256
+            });
+        }
+
+        if (savedFiles.Count == 0)
+        {
+            throw new InvalidOperationException("No completed files were available to create the transfer.");
+        }
+
+        _logger.LogWarning("PHASE37 inserting transfer. TransferId={TransferId}; Files={FileCount}; Recipient={Recipient}; Sender={Sender}", transfer.TransferId, savedFiles.Count, recipientEmail, senderEmail);
+
+        await _repo.CreateTransferAsync(transfer, savedFiles);
+
+        _logger.LogWarning("PHASE37 inserted transfer. TransferId={TransferId}; Files={FileCount}", transfer.TransferId, savedFiles.Count);
+
+        var downloadLink = Url.Action("Download", "Transfer", new { id = transfer.DownloadToken }, Request.Scheme)
+            ?? $"/Transfer/Download/{transfer.DownloadToken}";
+
+        await _transferNotifications.NotifyUploadCompleteAsync(transfer, savedFiles, downloadLink, HttpContext);
+
+        await _audit.WriteAsync(
+            transfer.TransferId,
+            senderEmail,
+            "Transfer Created",
+            $"Recipient={recipientEmail}; Files={savedFiles.Count}; Subject={subject}",
+            HttpContext.Connection.RemoteIpAddress?.ToString());
+
+        _logger.LogInformation("Transfer created from upload pipeline. TransferId={TransferId}; Recipient={Recipient}; Sender={Sender}; Files={FileCount}",
+            transfer.TransferId, recipientEmail, senderEmail, savedFiles.Count);
+
+        return (transfer, savedFiles, downloadLink);
+    }
+
+    private void ValidateTransferInputs(string recipientEmail, int expirationDays, int? maxDownloads, int fileCount)
+    {
+        var maxDays = _config.GetValue<int>("Transfers:MaximumExpirationDays", 30);
+        if (expirationDays < 1 || expirationDays > maxDays)
+        {
+            ModelState.AddModelError("ExpirationDays", $"Expiration must be between 1 and {maxDays} days.");
+        }
+
+        if (string.IsNullOrWhiteSpace(recipientEmail))
+        {
+            ModelState.AddModelError("RecipientEmail", "Recipient email is required.");
+        }
+
+        if (maxDownloads is < 1)
+        {
+            ModelState.AddModelError("MaxDownloads", "Maximum downloads must be greater than zero.");
+        }
+
+        if (fileCount == 0)
+        {
+            ModelState.AddModelError("Files", "At least one completed file is required.");
+        }
+    }
+
+    private List<string> ValidateTransferRequest(CreateTransferFromUploadsRequest request, int completedFileCount)
+    {
+        var errors = new List<string>();
+        var maxDays = _config.GetValue<int>("Transfers:MaximumExpirationDays", 30);
+
+        if (string.IsNullOrWhiteSpace(request.RecipientEmail))
+        {
+            errors.Add("Recipient email is required.");
+        }
+
+        if (request.ExpirationDays < 1 || request.ExpirationDays > maxDays)
+        {
+            errors.Add($"Expiration must be between 1 and {maxDays} days.");
+        }
+
+        if (request.MaxDownloads is < 1)
+        {
+            errors.Add("Maximum downloads must be greater than zero.");
+        }
+
+        if (completedFileCount == 0)
+        {
+            errors.Add("At least one completed file is required.");
+        }
+
+        return errors;
     }
 
     private async Task<(bool blocked, string result)> ScanAndRecordAsync(Guid transferId, Guid fileId, string originalName, string storagePath, string? sha256, CancellationToken cancellationToken)
@@ -368,6 +526,23 @@ public sealed class TransferController : Controller
 
         var blocked = !scan.IsClean && (blockUnscanned || scan.Result.Equals("Infected", StringComparison.OrdinalIgnoreCase) || scan.Result.Equals("Quarantined", StringComparison.OrdinalIgnoreCase));
         return (blocked, scan.Result);
+    }
+
+    private string GetAuthenticatedUserEmail()
+    {
+        var principal = HttpContext.User;
+        return principal.FindFirstValue("preferred_username")
+            ?? principal.FindFirstValue(ClaimTypes.Email)
+            ?? principal.Identity?.Name
+            ?? "unknown@bgohio.gov";
+    }
+
+    private string GetAuthenticatedUserName(string fallbackEmail)
+    {
+        var principal = HttpContext.User;
+        return principal.FindFirstValue("name")
+            ?? principal.Identity?.Name
+            ?? fallbackEmail;
     }
 
     private static string MakeUniqueName(ZipArchive archive, string fileName)

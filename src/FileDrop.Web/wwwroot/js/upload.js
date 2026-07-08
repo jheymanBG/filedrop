@@ -1,7 +1,8 @@
 (function () {
     const chunkSize = 10 * 1024 * 1024;
-    const maxParallelFiles = 2;
-    const maxParallelChunksPerFile = 3;
+    const maxParallelFiles = 3;
+    const maxParallelChunksPerFile = 4;
+    const maxChunkRetries = 3;
 
     const form = document.getElementById('transferForm');
     const filesInput = document.getElementById('files');
@@ -13,11 +14,13 @@
     const uploadedIds = document.getElementById('UploadedIds');
     const uploadSummary = document.getElementById('uploadSummary');
 
-    if (!form || !filesInput || !dropZone || !uploadButton) return;
+    if (!form || !filesInput || !dropZone || !uploadButton || !progressList || !uploadedIds) return;
 
     let selectedFiles = [];
     let completedUploadIds = [];
     let isUploading = false;
+    let abortRequested = false;
+    const uploadControllers = new Map();
 
     function formatBytes(bytes) {
         if (!bytes) return '0 B';
@@ -63,16 +66,16 @@
         progressList.innerHTML = '';
         completedUploadIds = [];
         uploadedIds.value = '';
-        createButton.disabled = true;
+        if (createButton) createButton.disabled = true;
 
         if (selectedFiles.length === 0) {
-            uploadSummary.classList.add('hidden');
+            uploadSummary?.classList.add('hidden');
             return;
         }
 
         const total = selectedFiles.reduce((sum, file) => sum + file.size, 0);
-        uploadSummary.classList.remove('hidden');
-        uploadSummary.textContent = `${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'} selected - ${formatBytes(total)}`;
+        uploadSummary?.classList.remove('hidden');
+        if (uploadSummary) uploadSummary.textContent = `${selectedFiles.length} file${selectedFiles.length === 1 ? '' : 's'} selected - ${formatBytes(total)}`;
 
         for (const file of selectedFiles) {
             progressList.appendChild(createRow(file));
@@ -99,7 +102,7 @@
     function updateRow(file, percent, status, metrics) {
         const row = progressList.querySelector(`[data-client-id="${CSS.escape(fileClientId(file))}"]`);
         if (!row) return;
-        row.classList.remove('queued');
+        row.classList.remove('queued', 'failed');
         row.querySelector('.progress-fill').style.width = `${Math.max(0, Math.min(100, percent))}%`;
         row.querySelector('.upload-progress-title span').textContent = `${percent.toFixed(1)}%`;
         row.querySelector('.upload-status').textContent = status;
@@ -107,8 +110,85 @@
         if (percent >= 100) row.classList.add('complete');
     }
 
+    function failRow(file, message) {
+        const row = progressList.querySelector(`[data-client-id="${CSS.escape(fileClientId(file))}"]`);
+        if (!row) return;
+        row.classList.add('failed');
+        row.querySelector('.upload-status').textContent = 'Failed';
+        row.querySelector('.upload-metrics').textContent = message || 'Upload failed';
+    }
+
+    async function fetchJson(url, options) {
+        const response = await fetch(url, options);
+        const text = await response.text();
+        let body = {};
+        if (text) {
+            try {
+                body = JSON.parse(text);
+            } catch (err) {
+                throw new Error(`Server returned non-JSON response from ${url}: ${text.substring(0, 300)}`);
+            }
+        }
+
+        if (!response.ok) {
+            throw new Error(body.error || body.Error || `Request failed: ${response.status}`);
+        }
+
+        return body;
+    }
+
+    function pick(obj, camel, pascal, fallback) {
+        if (!obj) return fallback;
+        if (Object.prototype.hasOwnProperty.call(obj, camel)) return obj[camel];
+        if (Object.prototype.hasOwnProperty.call(obj, pascal)) return obj[pascal];
+        return fallback;
+    }
+
+    function normalizeUploadSession(raw) {
+        const uploadId = pick(raw, 'uploadId', 'UploadId', '');
+        const totalChunks = Number(pick(raw, 'totalChunks', 'TotalChunks', 0));
+        const chunkBytes = Number(pick(raw, 'chunkSizeBytes', 'ChunkSizeBytes', chunkSize));
+        const completedChunks = pick(raw, 'completedChunks', 'CompletedChunks', []);
+        const status = pick(raw, 'status', 'Status', 'Uploading');
+        const bytesReceived = Number(pick(raw, 'bytesReceived', 'BytesReceived', 0));
+        const totalBytes = Number(pick(raw, 'totalBytes', 'TotalBytes', 0));
+        const alreadyComplete = !!pick(raw, 'alreadyComplete', 'AlreadyComplete', false) || status === 'Complete';
+
+        if (!uploadId) throw new Error('Upload start succeeded but no uploadId was returned by the server.');
+        if (!Number.isFinite(totalChunks) || totalChunks <= 0) throw new Error(`Upload start returned an invalid totalChunks value: ${totalChunks}`);
+        if (!Number.isFinite(chunkBytes) || chunkBytes <= 0) throw new Error(`Upload start returned an invalid chunkSizeBytes value: ${chunkBytes}`);
+
+        return {
+            uploadId,
+            totalChunks,
+            chunkSizeBytes: chunkBytes,
+            completedChunks: Array.isArray(completedChunks) ? completedChunks : [],
+            status,
+            bytesReceived,
+            totalBytes,
+            alreadyComplete
+        };
+    }
+
+    function normalizeUploadStatus(raw) {
+        return {
+            uploadId: pick(raw, 'uploadId', 'UploadId', ''),
+            status: pick(raw, 'status', 'Status', ''),
+            chunksReceived: Number(pick(raw, 'chunksReceived', 'ChunksReceived', 0)),
+            totalChunks: Number(pick(raw, 'totalChunks', 'TotalChunks', 0)),
+            completedChunks: pick(raw, 'completedChunks', 'CompletedChunks', []),
+            bytesReceived: Number(pick(raw, 'bytesReceived', 'BytesReceived', 0)),
+            totalBytes: Number(pick(raw, 'totalBytes', 'TotalBytes', 0)),
+            percent: Number(pick(raw, 'percent', 'Percent', 0)),
+            originalFileName: pick(raw, 'originalFileName', 'OriginalFileName', ''),
+            storedFileName: pick(raw, 'storedFileName', 'StoredFileName', ''),
+            storagePath: pick(raw, 'storagePath', 'StoragePath', ''),
+            sha256Hash: pick(raw, 'sha256Hash', 'Sha256Hash', '')
+        };
+    }
+
     async function startUpload(file) {
-        const response = await fetch('/Upload/Start', {
+        return await fetchJson('/Upload/Start', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -120,13 +200,20 @@
                 lastModifiedTicks: file.lastModified
             })
         });
+    }
 
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({ error: 'Could not start upload.' }));
-            throw new Error(err.error || 'Could not start upload.');
+    async function uploadChunkWithRetry(file, session, chunkIndex) {
+        let lastError;
+        for (let attempt = 1; attempt <= maxChunkRetries; attempt++) {
+            if (abortRequested) throw new Error('Upload cancelled.');
+            try {
+                return await uploadChunk(file, session, chunkIndex);
+            } catch (err) {
+                lastError = err;
+                await new Promise(resolve => setTimeout(resolve, attempt * 750));
+            }
         }
-
-        return await response.json();
+        throw lastError;
     }
 
     async function uploadChunk(file, session, chunkIndex) {
@@ -134,46 +221,96 @@
         const endByte = Math.min(startByte + session.chunkSizeBytes, file.size);
         const blob = file.slice(startByte, endByte);
         const hash = await sha256Hex(blob);
+        const controller = new AbortController();
+        uploadControllers.set(`${session.uploadId}:${chunkIndex}`, controller);
 
         const data = new FormData();
         data.append('chunk', blob, `${file.name}.part${chunkIndex}`);
 
-        const response = await fetch(`/Upload/Chunk?uploadId=${session.uploadId}&chunkIndex=${chunkIndex}&chunkSha256=${hash}`, {
-            method: 'POST',
-            body: data
-        });
-
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({ error: `Chunk ${chunkIndex} failed.` }));
-            throw new Error(err.error || `Chunk ${chunkIndex} failed.`);
+        try {
+            return await fetchJson(`/Upload/Chunk?uploadId=${session.uploadId}&chunkIndex=${chunkIndex}&chunkSha256=${hash}`, {
+                method: 'POST',
+                body: data,
+                signal: controller.signal
+            });
+        } finally {
+            uploadControllers.delete(`${session.uploadId}:${chunkIndex}`);
         }
-
-        return await response.json();
     }
 
     async function completeUpload(session) {
-        const response = await fetch('/Upload/Complete', {
+        return await fetchJson('/Upload/Complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ uploadId: session.uploadId })
         });
+    }
 
-        if (!response.ok) {
-            const err = await response.json().catch(() => ({ error: 'Could not finalize upload.' }));
-            throw new Error(err.error || 'Could not finalize upload.');
+    async function cancelUpload(session) {
+        try {
+            await fetchJson('/Upload/Cancel', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uploadId: session.uploadId })
+            });
+        } catch { }
+    }
+
+
+    function getAntiForgeryToken() {
+        const token = form.querySelector('input[name="__RequestVerificationToken"]');
+        return token ? token.value : '';
+    }
+
+    function showTransferError(message) {
+        let summary = form.querySelector('.validation-summary');
+        if (!summary) {
+            summary = document.createElement('div');
+            summary.className = 'validation-summary';
+            form.prepend(summary);
+        }
+        summary.innerHTML = `<ul><li>${escapeHtml(message || 'Transfer creation failed.')}</li></ul>`;
+        summary.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    async function createTransferFromUploads() {
+        const payload = {
+            uploadedIds: completedUploadIds,
+            recipientEmail: document.getElementById('RecipientEmail')?.value || '',
+            subject: document.getElementById('Subject')?.value || '',
+            message: document.getElementById('Message')?.value || '',
+            expirationDays: parseInt(document.getElementById('ExpirationDays')?.value || '7', 10),
+            maxDownloads: document.getElementById('MaxDownloads')?.value ? parseInt(document.getElementById('MaxDownloads').value, 10) : null,
+            disableAfterFirstDownload: !!form.querySelector('input[name="DisableAfterFirstDownload"]')?.checked
+        };
+
+        const token = getAntiForgeryToken();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers['RequestVerificationToken'] = token;
+
+        const response = await fetch('/Transfer/CreateFromUploads', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload)
+        });
+
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.success) {
+            throw new Error(body.error || `Transfer creation failed: ${response.status}`);
         }
 
-        return await response.json();
+        return body;
     }
 
     async function uploadFile(file) {
         const startedAt = Date.now();
         updateRow(file, 0, 'Starting', formatBytes(file.size));
-        const session = await startUpload(file);
+        const session = normalizeUploadSession(await startUpload(file));
         const completed = new Set(session.completedChunks || []);
 
         if (session.alreadyComplete || session.status === 'Complete') {
             completedUploadIds.push(session.uploadId);
+            uploadedIds.value = completedUploadIds.join(',');
             updateRow(file, 100, 'Already uploaded', 'Ready to send');
             return;
         }
@@ -186,7 +323,7 @@
                 const index = nextIndex++;
                 if (completed.has(index)) continue;
 
-                const status = await uploadChunk(file, session, index);
+                const status = normalizeUploadStatus(await uploadChunkWithRetry(file, session, index));
                 completed.add(index);
                 bytesDone = status.bytesReceived;
                 const elapsed = Math.max((Date.now() - startedAt) / 1000, 1);
@@ -201,12 +338,24 @@
             }
         }
 
-        await Promise.all(Array.from({ length: Math.min(maxParallelChunksPerFile, session.totalChunks) }, () => worker()));
-        updateRow(file, 99.5, 'Finalizing', 'Merging chunks and verifying SHA256');
-        const finalStatus = await completeUpload(session);
-        completedUploadIds.push(finalStatus.uploadId);
-        uploadedIds.value = completedUploadIds.join(',');
-        updateRow(file, 100, 'Complete', `${formatBytes(file.size)} uploaded`);
+        try {
+            await Promise.all(Array.from({ length: Math.min(maxParallelChunksPerFile, session.totalChunks) }, () => worker()));
+            updateRow(file, 99.5, 'Finalizing', 'Merging chunks and verifying SHA256');
+            const finalStatus = normalizeUploadStatus(await completeUpload(session));
+            completedUploadIds.push(finalStatus.uploadId || session.uploadId);
+            uploadedIds.value = completedUploadIds.join(',');
+            updateRow(file, 100, 'Complete', `${formatBytes(file.size)} uploaded`);
+        } catch (err) {
+            if (abortRequested) await cancelUpload(session);
+            failRow(file, err.message || 'Upload failed');
+            throw err;
+        }
+    }
+
+    function updateSummaryAfterTransfer(transfer) {
+        if (!uploadSummary) return;
+        uploadSummary.classList.remove('hidden');
+        uploadSummary.textContent = `Transfer created. ${transfer.fileCount || selectedFiles.length} file(s) attached. Emails are being sent.`;
     }
 
     async function runQueue() {
@@ -217,8 +366,9 @@
         }
 
         isUploading = true;
+        abortRequested = false;
         uploadButton.disabled = true;
-        clearButton.disabled = true;
+        if (clearButton) clearButton.disabled = false;
         uploadButton.textContent = 'Uploading...';
         completedUploadIds = [];
         uploadedIds.value = '';
@@ -234,17 +384,50 @@
 
         try {
             await Promise.all(Array.from({ length: Math.min(maxParallelFiles, selectedFiles.length) }, () => fileWorker()));
-            createButton.disabled = false;
-            uploadButton.textContent = 'Sending...';
-            form.submit();
+            uploadedIds.value = completedUploadIds.join(',');
+
+            if (completedUploadIds.length !== selectedFiles.length) {
+                throw new Error(`Upload completed ${completedUploadIds.length} of ${selectedFiles.length} file(s). The transfer was not sent.`);
+            }
+
+            if (!form.reportValidity()) {
+                uploadButton.disabled = false;
+                uploadButton.textContent = 'Upload and Send';
+                if (createButton) createButton.disabled = false;
+                return;
+            }
+
+            if (createButton) createButton.disabled = false;
+            uploadButton.textContent = 'Creating transfer and sending emails...';
+
+            const transfer = await createTransferFromUploads();
+            updateSummaryAfterTransfer(transfer);
+            window.location.href = transfer.redirectUrl || `/Transfer/Created/${transfer.downloadToken}`;
         } catch (err) {
-            alert(err.message || err);
+            if (!abortRequested) {
+                showTransferError(err.message || err);
+                alert(err.message || err);
+            }
             uploadButton.disabled = false;
-            clearButton.disabled = false;
-            uploadButton.textContent = 'Retry Upload';
+            if (clearButton) clearButton.disabled = false;
+            uploadButton.textContent = abortRequested ? 'Upload Cancelled - Retry' : 'Retry Upload';
         } finally {
             isUploading = false;
         }
+    }
+
+    function cancelAll() {
+        if (!isUploading) {
+            filesInput.value = '';
+            selectedFiles = [];
+            renderSummary();
+            return;
+        }
+
+        abortRequested = true;
+        for (const controller of uploadControllers.values()) controller.abort();
+        uploadControllers.clear();
+        uploadButton.textContent = 'Cancelling...';
     }
 
     dropZone.addEventListener('click', () => filesInput.click());
@@ -258,18 +441,19 @@
     });
 
     filesInput.addEventListener('change', () => setFiles(filesInput.files));
-    clearButton.addEventListener('click', () => {
-        if (isUploading) return;
-        filesInput.value = '';
-        selectedFiles = [];
-        renderSummary();
-    });
+    clearButton?.addEventListener('click', cancelAll);
     uploadButton.addEventListener('click', runQueue);
 
     form.addEventListener('submit', e => {
         if (!uploadedIds.value) {
             e.preventDefault();
             alert('Upload files first.');
+            return;
+        }
+
+        if (completedUploadIds.length > 0 && completedUploadIds.length !== selectedFiles.length) {
+            e.preventDefault();
+            alert('Not all selected files finished uploading. Please retry the upload.');
         }
     });
 })();

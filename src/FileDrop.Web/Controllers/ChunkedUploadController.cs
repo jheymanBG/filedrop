@@ -22,7 +22,8 @@ public sealed class ChunkedUploadController : Controller
     {
         try
         {
-            return Json(await _chunks.StartAsync(HttpContext, request));
+            var result = await _chunks.StartAsync(HttpContext, request);
+            return Json(ToStartDto(result));
         }
         catch (Exception ex)
         {
@@ -43,7 +44,8 @@ public sealed class ChunkedUploadController : Controller
                 return BadRequest(new { error = "Chunk is missing." });
             }
 
-            return Json(await _chunks.SaveChunkAsync(uploadId, chunkIndex, chunk, chunkSha256, cancellationToken));
+            var result = await _chunks.SaveChunkAsync(uploadId, chunkIndex, chunk, chunkSha256, cancellationToken);
+            return Json(ToStatusDto(result, chunkIndex, result.AlreadyReceived));
         }
         catch (Exception ex)
         {
@@ -57,7 +59,8 @@ public sealed class ChunkedUploadController : Controller
     {
         try
         {
-            return Json(await _chunks.CompleteAsync(request.UploadId, cancellationToken));
+            var result = await _chunks.CompleteAsync(request.UploadId, cancellationToken);
+            return Json(ToStatusDto(result));
         }
         catch (Exception ex)
         {
@@ -66,10 +69,67 @@ public sealed class ChunkedUploadController : Controller
         }
     }
 
+    [HttpPost("/Upload/Cancel")]
+    public async Task<IActionResult> Cancel([FromBody] CancelChunkedUploadRequest request)
+    {
+        try
+        {
+            var result = await _chunks.CancelAsync(HttpContext, request.UploadId);
+            return Json(ToStatusDto(result));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Could not cancel chunked upload. UploadId={UploadId}", request.UploadId);
+            return BadRequest(new { error = ex.Message });
+        }
+    }
+
+    [HttpGet("/Upload/Active")]
+    public async Task<IActionResult> Active()
+    {
+        return Json(await _chunks.GetActiveAsync(HttpContext));
+    }
+
     [HttpGet("/Upload/Status/{uploadId:guid}")]
     public async Task<IActionResult> Status(Guid uploadId)
     {
         var status = await _chunks.GetStatusAsync(uploadId);
-        return status is null ? NotFound() : Json(status);
+        return status is null ? NotFound() : Json(ToStatusDto(status));
     }
+
+    private static object ToStartDto(StartChunkedUploadResponse result) => new
+    {
+        uploadId = result.UploadId,
+        totalChunks = result.TotalChunks,
+        chunkSizeBytes = result.ChunkSizeBytes,
+        status = result.Status,
+        completedChunks = result.CompletedChunks,
+        bytesReceived = result.BytesReceived,
+        totalBytes = result.TotalBytes,
+        percent = result.Percent,
+        alreadyComplete = result.AlreadyComplete
+    };
+
+    private static object ToStatusDto(ChunkedUploadStatus result, int? chunkIndex = null, bool? alreadyReceived = null) => new
+    {
+        uploadId = result.UploadId,
+        status = result.Status,
+        chunksReceived = result.ChunksReceived,
+        totalChunks = result.TotalChunks,
+        completedChunks = result.CompletedChunks,
+        bytesReceived = result.BytesReceived,
+        totalBytes = result.TotalBytes,
+        percent = result.Percent,
+        originalFileName = result.OriginalFileName,
+        storedFileName = result.StoredFileName,
+        storagePath = result.StoragePath,
+        sha256Hash = result.Sha256Hash,
+        expectedSha256Hash = result.ExpectedSha256Hash,
+        clientFileId = result.ClientFileId,
+        createdDate = result.CreatedDate,
+        completedDate = result.CompletedDate,
+        lastActivityDate = result.LastActivityDate,
+        chunkIndex,
+        alreadyReceived
+    };
 }

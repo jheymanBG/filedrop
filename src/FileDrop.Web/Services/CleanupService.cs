@@ -7,6 +7,7 @@ public interface ICleanupService
 {
     Task<int> DeleteExpiredTransfersAsync(int olderThanDays = 0);
     Task<int> DeleteTransferFilesAndRecordAsync(Guid transferId);
+    Task<CleanupPreviewResult> PreviewExpiredTransfersAsync(int olderThanDays = 0);
 }
 
 public sealed class CleanupService : ICleanupService
@@ -20,8 +21,25 @@ public sealed class CleanupService : ICleanupService
         _logger = logger;
     }
 
+    public async Task<CleanupPreviewResult> PreviewExpiredTransfersAsync(int olderThanDays = 0)
+    {
+        if (olderThanDays < 0) olderThanDays = 0;
+        await using var db = new SqlConnection(_connectionString);
+
+        return await db.QuerySingleAsync<CleanupPreviewResult>("""
+            SELECT
+                TransferCount = COUNT(DISTINCT t.TransferId),
+                FileCount = COUNT(f.FileId),
+                TotalBytes = COALESCE(SUM(f.FileSizeBytes), 0)
+            FROM dbo.Transfers t
+            LEFT JOIN dbo.TransferFiles f ON f.TransferId = t.TransferId
+            WHERE t.ExpirationDate < DATEADD(day, -@olderThanDays, SYSUTCDATETIME());
+            """, new { olderThanDays });
+    }
+
     public async Task<int> DeleteExpiredTransfersAsync(int olderThanDays = 0)
     {
+        if (olderThanDays < 0) olderThanDays = 0;
         await using var db = new SqlConnection(_connectionString);
 
         var transfers = (await db.QueryAsync<Guid>("""
@@ -68,4 +86,11 @@ public sealed class CleanupService : ICleanupService
         await tx.CommitAsync();
         return deleted;
     }
+}
+
+public sealed class CleanupPreviewResult
+{
+    public int TransferCount { get; set; }
+    public int FileCount { get; set; }
+    public long TotalBytes { get; set; }
 }

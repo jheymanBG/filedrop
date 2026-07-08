@@ -9,6 +9,8 @@ namespace FileDrop.Web.Services;
 public interface IEmailService
 {
     Task SendTransferCreatedAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink);
+    Task SendRecipientUploadReadyAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink);
+    Task SendSenderUploadCompleteAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink);
     Task SendDownloadNotificationAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadedItem, string? ipAddress);
 }
 
@@ -33,8 +35,8 @@ public sealed class EmailService : IEmailService
 
         try
         {
-            await SendRecipientEmailAsync(transfer, files, downloadLink);
-            await SendSenderConfirmationAsync(transfer, files, downloadLink);
+            await SendRecipientUploadReadyAsync(transfer, files, downloadLink);
+            await SendSenderUploadCompleteAsync(transfer, files, downloadLink);
 
             _logger.LogInformation("Transfer email sent. To={Recipient}; BCC={Bcc}; TransferId={TransferId}; Files={FileCount}",
                 transfer.RecipientEmail, _config["Notifications:AlwaysBcc"], transfer.TransferId, files.Count);
@@ -89,7 +91,7 @@ public sealed class EmailService : IEmailService
         }
     }
 
-    private async Task SendRecipientEmailAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink)
+    public async Task SendRecipientUploadReadyAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink)
     {
         var subject = string.IsNullOrWhiteSpace(transfer.Subject)
             ? "City of Bowling Green Secure File Transfer"
@@ -103,9 +105,12 @@ public sealed class EmailService : IEmailService
         await SendAsync(message);
     }
 
-    private async Task SendSenderConfirmationAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink)
+    public async Task SendSenderUploadCompleteAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink)
     {
-        if (!_config.GetValue<bool>("Notifications:SendSenderConfirmation", true))
+        var enabled = _config.GetValue<bool?>("Notifications:SendSenderUploadComplete")
+            ?? _config.GetValue<bool>("Notifications:SendSenderConfirmation", true);
+
+        if (!enabled)
         {
             return;
         }
@@ -118,7 +123,7 @@ public sealed class EmailService : IEmailService
 
         using var message = CreateMessage();
         message.To.Add(senderEmail);
-        message.Subject = "FileDrop transfer confirmation";
+        message.Subject = "FileDrop upload complete";
         AddBodies(message, BuildSenderText(transfer, files, downloadLink), BuildSenderHtml(transfer, files, downloadLink));
         await SendAsync(message);
     }
@@ -237,8 +242,8 @@ public sealed class EmailService : IEmailService
     {
         return $"""
         <html><body style="font-family:Segoe UI,Arial,sans-serif;">
-          <h2>FileDrop Transfer Confirmation</h2>
-          <p>Your FileDrop transfer was created.</p>
+          <h2>FileDrop Upload Complete</h2>
+          <p>Your FileDrop upload completed successfully and the recipient notification was generated.</p>
           <p><strong>Recipient:</strong> {E(transfer.RecipientEmail)}</p>
           <p><strong>Expires:</strong> {transfer.ExpirationDate.ToLocalTime():MMMM d, yyyy h:mm tt}</p>
           <p><strong>Files:</strong></p>
@@ -251,7 +256,9 @@ public sealed class EmailService : IEmailService
     private static string BuildSenderText(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink)
     {
         return $"""
-        FileDrop Transfer Confirmation
+        FileDrop Upload Complete
+
+        Your FileDrop upload completed successfully and the recipient notification was generated.
 
         Recipient: {transfer.RecipientEmail}
         Expires: {transfer.ExpirationDate.ToLocalTime():MMMM d, yyyy h:mm tt}

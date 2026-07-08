@@ -1065,3 +1065,49 @@ button.danger { background: #9a1f1f; }
     .upload-progress-title { display: grid; }
     .upload-progress-detail { display: grid; }
 }
+
+/* v0.8.0 Large Chunk 2 upload reliability additions */
+.upload-progress-row.failed {
+    border-color: #e8b8b8;
+    background: #fff4f4;
+}
+.upload-progress-row.failed .progress-fill {
+    background: #b3261e;
+}
+.upload-progress-row.failed .upload-status,
+.upload-progress-row.failed .upload-metrics {
+    color: #8a1f1f;
+}
+
+/* v0.8.0 Large Chunk 3 upload manager dashboard additions */
+.admin-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 18px;
+    flex-wrap: wrap;
+}
+.responsive-table {
+    overflow-x: auto;
+}
+.inline-form {
+    display: flex;
+    align-items: end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.inline-form label {
+    display: grid;
+    gap: 6px;
+}
+.danger-zone {
+    border-color: #f0c9a9;
+    background: #fffaf4;
+}
+.upload-live-metrics .metric strong {
+    font-variant-numeric: tabular-nums;
+}
+.admin-table .hash {
+    max-width: 440px;
+    overflow-wrap: anywhere;
+}

@@ -1,4 +1,18 @@
-﻿@model FileDrop.Web.Models.UploadManagerViewModel
+@model FileDrop.Web.Models.UploadManagerViewModel
+@{
+    static string Bytes(long value)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double size = value;
+        var unit = 0;
+        while (size >= 1024 && unit < units.Length - 1)
+        {
+            size /= 1024;
+            unit++;
+        }
+        return $"{size:0.##} {units[unit]}";
+    }
+}
 
 <section class="admin-shell">
     <aside class="admin-nav">
@@ -23,17 +37,78 @@
     </aside>
 
     <div class="admin-main">
-        <h1>Upload Manager</h1>
+        <div class="admin-title-row">
+            <div>
+                <h1>Upload Manager</h1>
+                <p class="muted">Live upload activity, retention, storage analytics, cleanup, and production diagnostics.</p>
+            </div>
+            <button type="button" class="secondary-button" id="refreshUploadDashboard">Refresh Live Dashboard</button>
+        </div>
 
         @if (TempData["Message"] is not null)
         {
             <div class="notice">@TempData["Message"]</div>
         }
 
+        <div class="metric-grid upload-live-metrics" id="uploadLiveMetrics">
+            <div class="metric"><span>Active Uploads</span><strong data-field="activeUploadCount">@Model.Dashboard.ActiveUploadCount</strong></div>
+            <div class="metric"><span>Finalizing</span><strong data-field="finalizingUploadCount">@Model.Dashboard.FinalizingUploadCount</strong></div>
+            <div class="metric"><span>Completed / 24h</span><strong data-field="completedUploadCount24h">@Model.Dashboard.CompletedUploadCount24h</strong></div>
+            <div class="metric"><span>Failed / 24h</span><strong data-field="failedUploadCount24h">@Model.Dashboard.FailedUploadCount24h</strong></div>
+            <div class="metric"><span>Abandoned</span><strong data-field="abandonedUploadCount">@Model.Dashboard.AbandonedUploadCount</strong></div>
+            <div class="metric"><span>Active Progress</span><strong data-field="activePercent">@Model.Dashboard.ActivePercent%</strong></div>
+        </div>
+
+        <div class="metric-grid">
+            <div class="metric"><span>Stored Transfer Data</span><strong>@Bytes(Model.Dashboard.Storage.TotalBytes)</strong></div>
+            <div class="metric"><span>Expired Transfer Data</span><strong>@Bytes(Model.Dashboard.Storage.ExpiredBytes)</strong></div>
+            <div class="metric"><span>Active Transfers</span><strong>@Model.Dashboard.Storage.ActiveTransferCount</strong></div>
+            <div class="metric"><span>Expired Transfers</span><strong>@Model.Dashboard.Storage.ExpiredTransferCount</strong></div>
+            <div class="metric"><span>Transfer Files</span><strong>@Model.Dashboard.Storage.FileCount</strong></div>
+            <div class="metric"><span>New Bytes / 24h</span><strong>@Bytes(Model.Dashboard.Storage.BytesCreated24h)</strong></div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Live Upload Activity</h2>
+            <p class="muted">Shows active chunked upload sessions. This panel auto-refreshes every 15 seconds while the page is open.</p>
+            <div class="responsive-table">
+                <table class="admin-table" id="activeUploadsTable">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>User</th>
+                            <th>Status</th>
+                            <th>Progress</th>
+                            <th>Received</th>
+                            <th>Last Activity</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var upload in Model.Dashboard.ActiveUploads)
+                    {
+                        <tr>
+                            <td class="hash">@upload.OriginalFileName</td>
+                            <td>@upload.CreatedByEmail</td>
+                            <td>@upload.Status</td>
+                            <td>@upload.Percent% (@upload.ChunksReceived/@upload.TotalChunks)</td>
+                            <td>@Bytes(upload.BytesReceived) / @Bytes(upload.TotalBytes)</td>
+                            <td>@upload.LastActivityDate.ToLocalTime()</td>
+                        </tr>
+                    }
+                    @if (Model.Dashboard.ActiveUploads.Count == 0)
+                    {
+                        <tr><td colspan="6" class="muted">No active uploads.</td></tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <div class="metric-grid">
             <div class="metric"><span>Configured Limit</span><strong>@Model.MaximumUploadGB GB</strong></div>
             <div class="metric"><span>IIS web.config Limit</span><strong>@Math.Round(Model.EffectiveWebConfigBytes / 1024m / 1024m / 1024m, 2) GB</strong></div>
             <div class="metric"><span>Status</span><strong class="@(Model.IsSynced ? "ok-text" : "bad-text")">@(Model.IsSynced ? "Synced" : "Out of Sync")</strong></div>
+            <div class="metric"><span>Completed Bytes / 24h</span><strong>@Bytes(Model.Dashboard.CompletedBytes24h)</strong></div>
         </div>
 
         <div class="admin-card">
@@ -53,12 +128,118 @@
         </div>
 
         <div class="admin-card">
+            <h2>Retention Policy</h2>
+            <p class="muted">Controls how long expired transfers remain on disk and whether FileDrop should automatically remove expired transfer files.</p>
+            <form method="post" action="/Admin/Uploads/Retention">
+                <label for="retentionDays">Delete expired transfers after additional days</label>
+                <input id="retentionDays" name="retentionDays" type="number" min="1" max="3650" value="@Model.RetentionDays" />
+
+                <label for="automaticCleanupHourUtc">Automatic cleanup hour, UTC</label>
+                <input id="automaticCleanupHourUtc" name="automaticCleanupHourUtc" type="number" min="0" max="23" value="@Model.AutomaticCleanupHourUtc" />
+
+                <label class="checkbox-row">
+                    <input type="checkbox" name="automaticCleanupEnabled" value="true" @(Model.AutomaticCleanupEnabled ? "checked" : "") />
+                    Enable automatic daily expired-transfer cleanup
+                </label>
+
+                <button type="submit">Save Retention Policy</button>
+            </form>
+        </div>
+
+        <div class="admin-card">
+            <h2>Top Storage by Sender</h2>
+            <div class="responsive-table">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Sender</th>
+                            <th>Transfers</th>
+                            <th>Files</th>
+                            <th>Bytes</th>
+                            <th>Last Transfer</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var sender in Model.Dashboard.TopSenders)
+                    {
+                        <tr>
+                            <td>@sender.SenderEmail</td>
+                            <td>@sender.TransferCount</td>
+                            <td>@sender.FileCount</td>
+                            <td>@Bytes(sender.TotalBytes)</td>
+                            <td>@(sender.LastTransferDate?.ToLocalTime().ToString() ?? "-")</td>
+                        </tr>
+                    }
+                    @if (Model.Dashboard.TopSenders.Count == 0)
+                    {
+                        <tr><td colspan="5" class="muted">No transfer storage history yet.</td></tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="admin-card">
+            <h2>Recent Upload Sessions</h2>
+            <div class="responsive-table">
+                <table class="admin-table" id="recentUploadsTable">
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>User</th>
+                            <th>Status</th>
+                            <th>Size</th>
+                            <th>Completed</th>
+                            <th>SHA256</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    @foreach (var upload in Model.Dashboard.RecentUploads)
+                    {
+                        <tr>
+                            <td class="hash">@upload.OriginalFileName</td>
+                            <td>@upload.CreatedByEmail</td>
+                            <td>@upload.Status</td>
+                            <td>@Bytes(upload.TotalBytes)</td>
+                            <td>@(upload.CompletedDate?.ToLocalTime().ToString() ?? upload.LastActivityDate.ToLocalTime().ToString())</td>
+                            <td class="hash">@(string.IsNullOrWhiteSpace(upload.Sha256Hash) ? "-" : upload.Sha256Hash)</td>
+                        </tr>
+                    }
+                    @if (Model.Dashboard.RecentUploads.Count == 0)
+                    {
+                        <tr><td colspan="6" class="muted">No completed, failed, or cancelled upload sessions yet.</td></tr>
+                    }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="admin-card danger-zone">
+            <h2>Cleanup</h2>
+            <p class="muted">Abandoned upload cleanup removes temporary chunk folders. Expired transfer cleanup removes completed transfer records and their stored files.</p>
+            <form method="post" action="/Admin/Uploads/CleanupAbandoned" class="inline-form">
+                <label for="olderThanHours">Abandoned after hours</label>
+                <input id="olderThanHours" name="olderThanHours" type="number" min="1" max="720" value="24" />
+                <button type="submit" class="warning">Clean Abandoned Uploads</button>
+            </form>
+            <form method="post" action="/Admin/Uploads/CleanupExpiredTransfers" class="inline-form">
+                <label for="olderThanDays">Expired for additional days</label>
+                <input id="olderThanDays" name="olderThanDays" type="number" min="0" max="3650" value="@Model.RetentionDays" />
+                <button type="submit" class="danger">Delete Expired Transfers</button>
+            </form>
+        </div>
+
+        <div class="admin-card">
             <h2>Diagnostics</h2>
             <table class="admin-table">
                 <tbody>
                     <tr><th>Publish web.config</th><td class="hash">@Model.PublishWebConfigPath</td><td>@(Model.PublishWebConfigExists ? "Found" : "Missing")</td></tr>
                     <tr><th>Configured Bytes</th><td>@Model.MaximumUploadBytes</td><td></td></tr>
                     <tr><th>Effective IIS Bytes</th><td>@Model.EffectiveWebConfigBytes</td><td></td></tr>
+                    <tr><th>Oldest Active Upload</th><td>@(Model.Dashboard.OldestActiveDate?.ToLocalTime().ToString() ?? "-")</td><td></td></tr>
+                    <tr><th>Last Completed Upload</th><td>@(Model.Dashboard.LastCompletedDate?.ToLocalTime().ToString() ?? "-")</td><td></td></tr>
+                    <tr><th>Oldest Transfer Expiration</th><td>@(Model.Dashboard.Storage.OldestExpirationDate?.ToLocalTime().ToString() ?? "-")</td><td></td></tr>
+                    <tr><th>Newest Transfer</th><td>@(Model.Dashboard.Storage.NewestTransferDate?.ToLocalTime().ToString() ?? "-")</td><td></td></tr>
                 </tbody>
             </table>
             <form method="post" action="/Admin/Uploads/Repair">
@@ -67,3 +248,5 @@
         </div>
     </div>
 </section>
+
+<script src="~/js/upload-manager.js" asp-append-version="true"></script>
