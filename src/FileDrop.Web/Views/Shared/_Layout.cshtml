@@ -1,4 +1,4 @@
-﻿@inject FileDrop.Web.Services.IBrandingService BrandingService
+@inject FileDrop.Web.Services.IBrandingService BrandingService
 @inject FileDrop.Web.Services.IAdminAccessService AdminAccessService
 @{
     var branding = await BrandingService.GetAsync();
@@ -13,13 +13,14 @@
     <link rel="stylesheet" href="/css/site.css" />
 </head>
 <body>
-<header class="site-header polished-header">
-    <div class="brand-wrap polished-brand">
+<header class="site-header polished-header compact-header">
+    <div class="brand-wrap polished-brand compact-brand">
         @if (!string.IsNullOrWhiteSpace(branding.LogoPath))
         {
-            <img class="site-logo header-logo-white" src="@branding.LogoPath" alt="@branding.OrganizationName logo" />
+            <img class="site-logo header-logo-white header-logo-large" src="@branding.LogoPath" alt="@branding.OrganizationName logo" />
+            <div class="brand-divider" aria-hidden="true"></div>
         }
-        <div>
+        <div class="brand-title-block">
             <div class="brand">@branding.OrganizationName</div>
             <div class="subbrand">@branding.ApplicationTitle</div>
         </div>

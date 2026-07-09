@@ -21,6 +21,16 @@
     let isUploading = false;
     let abortRequested = false;
     const uploadControllers = new Map();
+    const fileAttemptIds = new WeakMap();
+
+    function newGuid() {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            const v = c === 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
 
     function formatBytes(bytes) {
         if (!bytes) return '0 B';
@@ -48,7 +58,16 @@
     }
 
     function fileClientId(file) {
-        return `${file.name}|${file.size}|${file.lastModified}`;
+        // Phase 42: every file selection gets its own client upload attempt id.
+        // This allows the same file to be uploaded multiple times without reusing a completed session.
+        if (!fileAttemptIds.has(file)) {
+            fileAttemptIds.set(file, `${newGuid()}|${file.name}|${file.size}|${file.lastModified}`);
+        }
+        return fileAttemptIds.get(file);
+    }
+
+    function rowId(file) {
+        return fileClientId(file);
     }
 
     async function sha256Hex(blob) {
@@ -85,7 +104,7 @@
     function createRow(file) {
         const row = document.createElement('div');
         row.className = 'upload-progress-row queued';
-        row.dataset.clientId = fileClientId(file);
+        row.dataset.clientId = rowId(file);
         row.innerHTML = `
             <div class="upload-progress-title">
                 <strong>${escapeHtml(file.name)}</strong>
@@ -100,7 +119,7 @@
     }
 
     function updateRow(file, percent, status, metrics) {
-        const row = progressList.querySelector(`[data-client-id="${CSS.escape(fileClientId(file))}"]`);
+        const row = progressList.querySelector(`[data-client-id="${CSS.escape(rowId(file))}"]`);
         if (!row) return;
         row.classList.remove('queued', 'failed');
         row.querySelector('.progress-fill').style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -111,7 +130,7 @@
     }
 
     function failRow(file, message) {
-        const row = progressList.querySelector(`[data-client-id="${CSS.escape(fileClientId(file))}"]`);
+        const row = progressList.querySelector(`[data-client-id="${CSS.escape(rowId(file))}"]`);
         if (!row) return;
         row.classList.add('failed');
         row.querySelector('.upload-status').textContent = 'Failed';
@@ -120,71 +139,9 @@
 
     async function fetchJson(url, options) {
         const response = await fetch(url, options);
-        const text = await response.text();
-        let body = {};
-        if (text) {
-            try {
-                body = JSON.parse(text);
-            } catch (err) {
-                throw new Error(`Server returned non-JSON response from ${url}: ${text.substring(0, 300)}`);
-            }
-        }
-
-        if (!response.ok) {
-            throw new Error(body.error || body.Error || `Request failed: ${response.status}`);
-        }
-
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(body.error || `Request failed: ${response.status}`);
         return body;
-    }
-
-    function pick(obj, camel, pascal, fallback) {
-        if (!obj) return fallback;
-        if (Object.prototype.hasOwnProperty.call(obj, camel)) return obj[camel];
-        if (Object.prototype.hasOwnProperty.call(obj, pascal)) return obj[pascal];
-        return fallback;
-    }
-
-    function normalizeUploadSession(raw) {
-        const uploadId = pick(raw, 'uploadId', 'UploadId', '');
-        const totalChunks = Number(pick(raw, 'totalChunks', 'TotalChunks', 0));
-        const chunkBytes = Number(pick(raw, 'chunkSizeBytes', 'ChunkSizeBytes', chunkSize));
-        const completedChunks = pick(raw, 'completedChunks', 'CompletedChunks', []);
-        const status = pick(raw, 'status', 'Status', 'Uploading');
-        const bytesReceived = Number(pick(raw, 'bytesReceived', 'BytesReceived', 0));
-        const totalBytes = Number(pick(raw, 'totalBytes', 'TotalBytes', 0));
-        const alreadyComplete = !!pick(raw, 'alreadyComplete', 'AlreadyComplete', false) || status === 'Complete';
-
-        if (!uploadId) throw new Error('Upload start succeeded but no uploadId was returned by the server.');
-        if (!Number.isFinite(totalChunks) || totalChunks <= 0) throw new Error(`Upload start returned an invalid totalChunks value: ${totalChunks}`);
-        if (!Number.isFinite(chunkBytes) || chunkBytes <= 0) throw new Error(`Upload start returned an invalid chunkSizeBytes value: ${chunkBytes}`);
-
-        return {
-            uploadId,
-            totalChunks,
-            chunkSizeBytes: chunkBytes,
-            completedChunks: Array.isArray(completedChunks) ? completedChunks : [],
-            status,
-            bytesReceived,
-            totalBytes,
-            alreadyComplete
-        };
-    }
-
-    function normalizeUploadStatus(raw) {
-        return {
-            uploadId: pick(raw, 'uploadId', 'UploadId', ''),
-            status: pick(raw, 'status', 'Status', ''),
-            chunksReceived: Number(pick(raw, 'chunksReceived', 'ChunksReceived', 0)),
-            totalChunks: Number(pick(raw, 'totalChunks', 'TotalChunks', 0)),
-            completedChunks: pick(raw, 'completedChunks', 'CompletedChunks', []),
-            bytesReceived: Number(pick(raw, 'bytesReceived', 'BytesReceived', 0)),
-            totalBytes: Number(pick(raw, 'totalBytes', 'TotalBytes', 0)),
-            percent: Number(pick(raw, 'percent', 'Percent', 0)),
-            originalFileName: pick(raw, 'originalFileName', 'OriginalFileName', ''),
-            storedFileName: pick(raw, 'storedFileName', 'StoredFileName', ''),
-            storagePath: pick(raw, 'storagePath', 'StoragePath', ''),
-            sha256Hash: pick(raw, 'sha256Hash', 'Sha256Hash', '')
-        };
     }
 
     async function startUpload(file) {
@@ -197,7 +154,8 @@
                 totalBytes: file.size,
                 chunkSizeBytes: chunkSize,
                 clientFileId: fileClientId(file),
-                lastModifiedTicks: file.lastModified
+                lastModifiedTicks: file.lastModified,
+                forceNewUploadAttempt: true
             })
         });
     }
@@ -305,7 +263,7 @@
     async function uploadFile(file) {
         const startedAt = Date.now();
         updateRow(file, 0, 'Starting', formatBytes(file.size));
-        const session = normalizeUploadSession(await startUpload(file));
+        const session = await startUpload(file);
         const completed = new Set(session.completedChunks || []);
 
         if (session.alreadyComplete || session.status === 'Complete') {
@@ -323,7 +281,7 @@
                 const index = nextIndex++;
                 if (completed.has(index)) continue;
 
-                const status = normalizeUploadStatus(await uploadChunkWithRetry(file, session, index));
+                const status = await uploadChunkWithRetry(file, session, index);
                 completed.add(index);
                 bytesDone = status.bytesReceived;
                 const elapsed = Math.max((Date.now() - startedAt) / 1000, 1);
@@ -341,8 +299,8 @@
         try {
             await Promise.all(Array.from({ length: Math.min(maxParallelChunksPerFile, session.totalChunks) }, () => worker()));
             updateRow(file, 99.5, 'Finalizing', 'Merging chunks and verifying SHA256');
-            const finalStatus = normalizeUploadStatus(await completeUpload(session));
-            completedUploadIds.push(finalStatus.uploadId || session.uploadId);
+            const finalStatus = await completeUpload(session);
+            completedUploadIds.push(finalStatus.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
             updateRow(file, 100, 'Complete', `${formatBytes(file.size)} uploaded`);
         } catch (err) {

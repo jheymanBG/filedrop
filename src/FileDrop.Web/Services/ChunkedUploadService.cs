@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using Dapper;
@@ -54,6 +55,10 @@ public sealed class ChunkedUploadService : IChunkedUploadService
 
         await using var db = new SqlConnection(_connectionString);
 
+        // Phase 42: Only resume active in-progress sessions.
+        // A completed, failed, cancelled, or abandoned upload must never be reused for a new upload attempt.
+        // This allows users to upload the same file name/size/timestamp multiple times while preserving true resume
+        // behavior for interrupted Uploading/Finalizing sessions that have the same ClientFileId.
         var existing = await db.QuerySingleOrDefaultAsync<ChunkedUploadStatusRow>("""
             SELECT TOP 1 *
             FROM dbo.ChunkedUploadSessions
@@ -61,7 +66,7 @@ public sealed class ChunkedUploadService : IChunkedUploadService
               AND ClientFileId = @ClientFileId
               AND OriginalFileName = @FileName
               AND TotalBytes = @TotalBytes
-              AND Status IN ('Uploading', 'Finalizing', 'Complete')
+              AND Status IN ('Uploading', 'Finalizing')
             ORDER BY CreatedDate DESC
             """, new
         {
@@ -73,33 +78,17 @@ public sealed class ChunkedUploadService : IChunkedUploadService
 
         if (existing is not null)
         {
-            // Resume only sessions that are physically valid.
-            // A stale Complete row with a missing final file must not short-circuit the upload.
-            // This was the cause of uploads showing Complete in SQL while no file existed in storage.
-            if (IsExistingSessionUsable(existing))
+            var existingStatus = await BuildStatusAsync(db, existing);
+            return new StartChunkedUploadResponse
             {
-                var existingStatus = await BuildStatusAsync(db, existing);
-                return new StartChunkedUploadResponse
-                {
-                    UploadId = existing.UploadId,
-                    TotalChunks = existing.TotalChunks,
-                    ChunkSizeBytes = existing.ChunkSizeBytes,
-                    Status = existingStatus.Status,
-                    CompletedChunks = existingStatus.CompletedChunks,
-                    BytesReceived = existingStatus.BytesReceived,
-                    TotalBytes = existingStatus.TotalBytes
-                };
-            }
-
-            _logger.LogWarning(
-                "Ignoring stale chunked upload session. UploadId={UploadId}; Status={Status}; FinalStoragePath={FinalStoragePath}; TempFolder={TempFolder}",
-                existing.UploadId, existing.Status, existing.FinalStoragePath, existing.TempFolder);
-
-            await db.ExecuteAsync("""
-                UPDATE dbo.ChunkedUploadSessions
-                SET Status = 'Failed', LastActivityDate = SYSUTCDATETIME()
-                WHERE UploadId = @UploadId
-                """, new { existing.UploadId });
+                UploadId = existing.UploadId,
+                TotalChunks = existing.TotalChunks,
+                ChunkSizeBytes = existing.ChunkSizeBytes,
+                Status = existingStatus.Status,
+                CompletedChunks = existingStatus.CompletedChunks,
+                BytesReceived = existingStatus.BytesReceived,
+                TotalBytes = existingStatus.TotalBytes
+            };
         }
 
         var uploadId = Guid.NewGuid();
@@ -220,63 +209,90 @@ public sealed class ChunkedUploadService : IChunkedUploadService
         await using var db = new SqlConnection(_connectionString);
         var session = await db.QuerySingleOrDefaultAsync<ChunkedUploadStatusRow>("SELECT * FROM dbo.ChunkedUploadSessions WHERE UploadId = @uploadId", new { uploadId });
         if (session is null) throw new InvalidOperationException("Upload session not found.");
-        if (session.Status.Equals(Complete, StringComparison.OrdinalIgnoreCase)) return await BuildStatusAsync(db, session);
-        if (!session.Status.Equals(Uploading, StringComparison.OrdinalIgnoreCase) && !session.Status.Equals(Finalizing, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Upload session cannot be completed.");
 
-        var completedChunks = await db.QueryAsync<int>("SELECT ChunkIndex FROM dbo.ChunkedUploadChunks WHERE UploadId = @uploadId ORDER BY ChunkIndex", new { uploadId });
-        var completedSet = completedChunks.ToHashSet();
-        if (completedSet.Count != session.TotalChunks)
+        if (session.Status.Equals(Complete, StringComparison.OrdinalIgnoreCase))
         {
-            var missing = Enumerable.Range(0, session.TotalChunks).Where(i => !completedSet.Contains(i)).Take(20);
+            if (!string.IsNullOrWhiteSpace(session.FinalStoragePath) && File.Exists(session.FinalStoragePath))
+            {
+                return await BuildStatusAsync(db, session);
+            }
+
+            _logger.LogWarning("Upload session was marked complete but final file is missing. Resetting to Finalizing. UploadId={UploadId}; FinalStoragePath={FinalStoragePath}", uploadId, session.FinalStoragePath);
+            await db.ExecuteAsync("""
+                UPDATE dbo.ChunkedUploadSessions
+                SET Status = 'Finalizing', CompletedDate = NULL, FinalStoragePath = NULL, StoredFileName = NULL, Sha256Hash = NULL, LastActivityDate = SYSUTCDATETIME()
+                WHERE UploadId = @uploadId
+                """, new { uploadId });
+            session.Status = Finalizing;
+            session.CompletedDate = null;
+            session.FinalStoragePath = null;
+            session.StoredFileName = null;
+            session.Sha256Hash = null;
+        }
+
+        if (!session.Status.Equals(Uploading, StringComparison.OrdinalIgnoreCase) &&
+            !session.Status.Equals(Finalizing, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Upload session cannot be completed.");
+        }
+
+        var chunkRows = (await db.QueryAsync<ChunkRow>("""
+            SELECT UploadId, ChunkIndex, BytesReceived, Sha256Hash
+            FROM dbo.ChunkedUploadChunks
+            WHERE UploadId = @uploadId
+            ORDER BY ChunkIndex
+            """, new { uploadId })).ToList();
+
+        var chunkMap = chunkRows.ToDictionary(x => x.ChunkIndex);
+        if (chunkMap.Count != session.TotalChunks)
+        {
+            var missing = Enumerable.Range(0, session.TotalChunks).Where(i => !chunkMap.ContainsKey(i)).Take(20);
             throw new InvalidOperationException("Not all chunks have been uploaded yet. Missing: " + string.Join(", ", missing));
         }
 
         await db.ExecuteAsync("UPDATE dbo.ChunkedUploadSessions SET Status = 'Finalizing', LastActivityDate = SYSUTCDATETIME() WHERE UploadId = @uploadId", new { uploadId });
 
+        var storageRoot = _config["Storage:RootPath"] ?? "C:\\SecureFileTransfer";
+        var dateFolder = Path.Combine(storageRoot, DateTime.Now.ToString("yyyy"), DateTime.Now.ToString("MM"), DateTime.Now.ToString("dd"));
+        var safeName = Path.GetFileName(session.OriginalFileName);
+        var storedName = $"{Guid.NewGuid():N}-{safeName}";
+        var finalPath = Path.Combine(dateFolder, storedName);
+        var assemblingPath = finalPath + ".assembling";
+
         try
         {
-            var storageRoot = _config["Storage:RootPath"] ?? "C:\\SecureFileTransfer";
-            var dateFolder = Path.Combine(storageRoot, DateTime.Now.ToString("yyyy"), DateTime.Now.ToString("MM"), DateTime.Now.ToString("dd"));
             Directory.CreateDirectory(dateFolder);
 
-            var safeName = Path.GetFileName(session.OriginalFileName);
-            var storedName = $"{Guid.NewGuid():N}-{safeName}";
-            var finalPath = Path.Combine(dateFolder, storedName);
+            await ValidateChunksAsync(session, chunkMap, cancellationToken);
 
-            await using (var output = new FileStream(finalPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 1024 * 1024, FileOptions.SequentialScan))
+            TryDelete(assemblingPath);
+            TryDelete(finalPath);
+
+            var sha = await AssembleChunksAsync(session, assemblingPath, cancellationToken);
+
+            var assembledInfo = new FileInfo(assemblingPath);
+            if (!assembledInfo.Exists)
             {
-                for (var i = 0; i < session.TotalChunks; i++)
-                {
-                    var chunkPath = Path.Combine(session.TempFolder, $"{i:D8}.chunk");
-                    if (!File.Exists(chunkPath)) throw new InvalidOperationException($"Missing chunk file {i}.");
-
-                    var chunkInfo = new FileInfo(chunkPath);
-                    var expectedChunkBytes = ExpectedChunkBytes(session, i);
-                    if (chunkInfo.Length != expectedChunkBytes)
-                    {
-                        throw new InvalidOperationException($"Chunk file {i} has invalid size. Expected {expectedChunkBytes} bytes, found {chunkInfo.Length} bytes.");
-                    }
-
-                    await using var input = new FileStream(chunkPath, FileMode.Open, FileAccess.Read, FileShare.Read, 1024 * 1024, FileOptions.SequentialScan);
-                    await input.CopyToAsync(output, cancellationToken);
-                }
-
-                await output.FlushAsync(cancellationToken);
+                throw new InvalidOperationException("Final upload assembly did not create an output file.");
             }
+
+            if (assembledInfo.Length != session.TotalBytes)
+            {
+                throw new InvalidOperationException($"Final upload size mismatch. Expected {session.TotalBytes} bytes, created {assembledInfo.Length} bytes.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(session.ExpectedSha256Hash) &&
+                !sha.Equals(session.ExpectedSha256Hash, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("Final file failed SHA256 verification.");
+            }
+
+            File.Move(assemblingPath, finalPath, overwrite: true);
 
             var finalInfo = new FileInfo(finalPath);
-            if (!finalInfo.Exists) throw new InvalidOperationException("Final upload file was not created.");
-            if (finalInfo.Length != session.TotalBytes)
+            if (!finalInfo.Exists || finalInfo.Length != session.TotalBytes)
             {
-                TryDelete(finalPath);
-                throw new InvalidOperationException($"Final upload file has invalid size. Expected {session.TotalBytes} bytes, found {finalInfo.Length} bytes.");
-            }
-
-            var sha = await ComputeSha256Async(finalPath, cancellationToken);
-            if (!string.IsNullOrWhiteSpace(session.ExpectedSha256Hash) && !sha.Equals(session.ExpectedSha256Hash, StringComparison.OrdinalIgnoreCase))
-            {
-                TryDelete(finalPath);
-                throw new InvalidOperationException("Final file failed SHA256 verification.");
+                throw new InvalidOperationException("Final upload file was not available after move to storage.");
             }
 
             await db.ExecuteAsync("""
@@ -291,7 +307,9 @@ public sealed class ChunkedUploadService : IChunkedUploadService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Chunked upload finalization failed. UploadId={UploadId}", uploadId);
+            _logger.LogError(ex, "Chunked upload finalization failed. UploadId={UploadId}; AssemblingPath={AssemblingPath}; FinalPath={FinalPath}", uploadId, assemblingPath, finalPath);
+            TryDelete(assemblingPath);
+            TryDelete(finalPath);
             await db.ExecuteAsync("UPDATE dbo.ChunkedUploadSessions SET Status = 'Failed', LastActivityDate = SYSUTCDATETIME() WHERE UploadId = @uploadId", new { uploadId });
             throw;
         }
@@ -443,28 +461,102 @@ public sealed class ChunkedUploadService : IChunkedUploadService
         AlreadyReceived = alreadyReceived
     };
 
-    private static bool IsExistingSessionUsable(ChunkedUploadStatusRow session)
-    {
-        if (session.Status.Equals(Complete, StringComparison.OrdinalIgnoreCase))
-        {
-            return !string.IsNullOrWhiteSpace(session.FinalStoragePath)
-                && File.Exists(session.FinalStoragePath)
-                && new FileInfo(session.FinalStoragePath).Length == session.TotalBytes;
-        }
-
-        if (session.Status.Equals(Uploading, StringComparison.OrdinalIgnoreCase) ||
-            session.Status.Equals(Finalizing, StringComparison.OrdinalIgnoreCase))
-        {
-            return !string.IsNullOrWhiteSpace(session.TempFolder) && Directory.Exists(session.TempFolder);
-        }
-
-        return false;
-    }
-
     private static long ExpectedChunkBytes(ChunkedUploadStatusRow session, int chunkIndex)
     {
         var start = (long)chunkIndex * session.ChunkSizeBytes;
         return Math.Min(session.ChunkSizeBytes, session.TotalBytes - start);
+    }
+
+    private async Task ValidateChunksAsync(ChunkedUploadStatusRow session, IReadOnlyDictionary<int, ChunkRow> chunkMap, CancellationToken cancellationToken)
+    {
+        var verifySha = _config.GetValue<bool>("Upload:VerifyChunkShaBeforeAssembly", false);
+        var maxParallel = _config.GetValue<int?>("Upload:ChunkValidationDegreeOfParallelism") ?? Math.Min(Environment.ProcessorCount, 8);
+        maxParallel = Math.Clamp(maxParallel, 1, 16);
+
+        var options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = maxParallel,
+            CancellationToken = cancellationToken
+        };
+
+        await Parallel.ForEachAsync(Enumerable.Range(0, session.TotalChunks), options, async (chunkIndex, ct) =>
+        {
+            if (!chunkMap.TryGetValue(chunkIndex, out var row))
+            {
+                throw new InvalidOperationException($"Chunk {chunkIndex} is missing from the upload database record.");
+            }
+
+            var chunkPath = Path.Combine(session.TempFolder, $"{chunkIndex:D8}.chunk");
+            var info = new FileInfo(chunkPath);
+            if (!info.Exists)
+            {
+                throw new InvalidOperationException($"Chunk file {chunkIndex} is missing from temporary storage.");
+            }
+
+            var expectedBytes = ExpectedChunkBytes(session, chunkIndex);
+            if (info.Length != expectedBytes || row.BytesReceived != expectedBytes)
+            {
+                throw new InvalidOperationException($"Chunk {chunkIndex} has invalid size. Expected {expectedBytes} bytes, found {info.Length} bytes on disk and {row.BytesReceived} bytes in SQL.");
+            }
+
+            if (verifySha && !string.IsNullOrWhiteSpace(row.Sha256Hash))
+            {
+                var sha = await ComputeSha256Async(chunkPath, ct);
+                if (!sha.Equals(row.Sha256Hash, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Chunk {chunkIndex} failed SHA256 verification before assembly.");
+                }
+            }
+        });
+    }
+
+    private async Task<string> AssembleChunksAsync(ChunkedUploadStatusRow session, string outputPath, CancellationToken cancellationToken)
+    {
+        var bufferSize = _config.GetValue<int?>("Upload:AssemblyBufferBytes") ?? (8 * 1024 * 1024);
+        bufferSize = Math.Clamp(bufferSize, 1024 * 1024, 32 * 1024 * 1024);
+
+        var buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+        using var incrementalHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+
+        try
+        {
+            await using var output = new FileStream(
+                outputPath,
+                FileMode.CreateNew,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize,
+                FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+            for (var i = 0; i < session.TotalChunks; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var chunkPath = Path.Combine(session.TempFolder, $"{i:D8}.chunk");
+
+                await using var input = new FileStream(
+                    chunkPath,
+                    FileMode.Open,
+                    FileAccess.Read,
+                    FileShare.Read,
+                    bufferSize,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan);
+
+                int read;
+                while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                {
+                    await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+                    incrementalHash.AppendData(buffer, 0, read);
+                }
+            }
+
+            await output.FlushAsync(cancellationToken);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+
+        return Convert.ToHexString(incrementalHash.GetHashAndReset()).ToLowerInvariant();
     }
 
     private static string GetUserEmail(HttpContext context) =>

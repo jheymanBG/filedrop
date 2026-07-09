@@ -1,7 +1,19 @@
-﻿@model FileDrop.Web.Models.TransferRecord
+@model FileDrop.Web.Models.TransferRecord
+@inject FileDrop.Web.Services.IBrandingService BrandingService
+@{
+    var branding = await BrandingService.GetAsync();
+}
 
-<section class="card success-card">
-    <div class="success-icon">âœ“</div>
+<section class="card success-card transfer-created-card">
+    @if (!string.IsNullOrWhiteSpace(branding.LogoPath))
+    {
+        <img class="success-logo" src="@branding.LogoPath" alt="@branding.OrganizationName logo" />
+    }
+    else
+    {
+        <div class="success-icon">✓</div>
+    }
+
     <h1>Transfer Created</h1>
     <p>The secure transfer was created successfully.</p>
 

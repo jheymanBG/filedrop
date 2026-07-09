@@ -1,4 +1,4 @@
-﻿:root {
+:root {
     --green: #0f5f3f;
     --green-dark: #0a422c;
     --light: #f5f7f4;
@@ -1110,4 +1110,116 @@ button.danger { background: #9a1f1f; }
 .admin-table .hash {
     max-width: 440px;
     overflow-wrap: anywhere;
+}
+
+
+/* Phase 40 - Bowling Green branding refresh */
+.compact-header,
+.polished-header.compact-header {
+    min-height: 82px;
+    padding: 14px 42px;
+}
+
+.compact-brand,
+.polished-brand.compact-brand {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+}
+
+.header-logo-large,
+.header-logo-white.header-logo-large {
+    width: auto;
+    max-width: 178px;
+    max-height: 72px;
+    object-fit: contain;
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    filter: brightness(0) invert(1);
+}
+
+.brand-divider {
+    width: 2px;
+    height: 58px;
+    background: rgba(255, 255, 255, .78);
+    flex: 0 0 auto;
+}
+
+.brand-title-block {
+    display: grid;
+    gap: 4px;
+}
+
+.polished-header.compact-header .brand {
+    font-size: 28px;
+    line-height: 1.05;
+}
+
+.polished-header.compact-header .subbrand {
+    font-size: 18px;
+    line-height: 1.2;
+}
+
+.transfer-created-card {
+    max-width: 760px;
+    margin-left: auto;
+    margin-right: auto;
+    text-align: center;
+}
+
+.success-logo {
+    display: block;
+    width: auto;
+    max-width: 220px;
+    max-height: 112px;
+    object-fit: contain;
+    margin: 0 auto 22px;
+    border-radius: 0;
+    background: transparent;
+}
+
+.transfer-created-card .success-icon {
+    margin-bottom: 18px;
+}
+
+.transfer-created-card h1 {
+    margin-top: 0;
+    margin-bottom: 10px;
+    font-size: 34px;
+}
+
+.transfer-created-card label {
+    text-align: center;
+}
+
+@media (max-width: 720px) {
+    .compact-header,
+    .polished-header.compact-header {
+        min-height: auto;
+        padding: 16px 20px;
+    }
+
+    .header-logo-large,
+    .header-logo-white.header-logo-large {
+        max-width: 142px;
+        max-height: 58px;
+    }
+
+    .brand-divider {
+        display: none;
+    }
+
+    .polished-header.compact-header .brand {
+        font-size: 23px;
+    }
+
+    .polished-header.compact-header .subbrand {
+        font-size: 16px;
+    }
+
+    .success-logo {
+        max-width: 180px;
+        max-height: 92px;
+    }
 }
