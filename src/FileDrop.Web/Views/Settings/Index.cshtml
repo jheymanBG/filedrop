@@ -1,4 +1,165 @@
-﻿@model FileDrop.Web.Models.SettingsViewModel
+@model FileDrop.Web.Models.SettingsViewModel
+@using System
+@using System.Linq
+@using System.Collections.Generic
+@{
+    var activeSettings = Model.Settings
+        .Where(s => IsActiveSetting(s.SettingKey))
+        .OrderBy(s => SortOrder(s.SettingKey))
+        .ThenBy(s => s.SettingKey)
+        .ToList();
+
+    var groupedSettings = activeSettings
+        .GroupBy(s => Category(s.SettingKey))
+        .OrderBy(g => CategorySort(g.Key))
+        .ToList();
+
+    static bool IsActiveSetting(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key)) return false;
+
+        var exact = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Transfers.DefaultExpirationDays",
+            "Transfers.MaximumExpirationDays",
+            "Cleanup.DeleteExpiredOlderThanDays",
+            "Email.AlwaysBcc",
+            "Notifications.AlwaysBcc",
+            "Notifications.DownloadNotifyAlwaysBcc",
+            "Notifications.SendDownloadNotification",
+            "Notifications.SendDownloadConfirmationToSender",
+            "Notifications.SendSenderConfirmation",
+            "Notifications.DownloadConfirmationSubject",
+            "Uploads.MaxTotalUploadMB",
+            "Uploads.MaxSingleFileMB",
+            "Uploads.BlockedExtensions",
+            "Uploads.RequireSubject",
+            "Uploads.MaxParallelFiles",
+            "Uploads.MaxParallelChunksPerFile",
+            "Uploads.ChunkSizeMB",
+            "Uploads.MaxRetryAttempts",
+            "Uploads.RetryDelayMilliseconds",
+            "Security.EnableVirusScanning",
+            "Security.QuarantineOnScanFailure",
+            "Security.BlockUnscannedFiles",
+            "Security.AllowOneTimeLinks",
+            "Security.DefaultOneTimeLink",
+            "Security.DefaultMaxDownloads",
+            "Alerts.FailedLoginThreshold",
+            "Alerts.FailedLoginWindowMinutes",
+            "Alerts.FailedLoginNotifyEmails",
+            "Alerts.LowDriveSpaceEnabled",
+            "Alerts.LowDriveSpaceThresholdPercent",
+            "Alerts.LowDriveSpaceThresholdGB",
+            "Alerts.LowDriveSpaceNotifyEmails",
+            "Alerts.LowDriveSpaceCooldownMinutes"
+        };
+
+        if (exact.Contains(key)) return true;
+
+        return key.StartsWith("Alerts.", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Notifications.", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Uploads.", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Transfers.", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Cleanup.", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string Category(string key)
+    {
+        if (key.StartsWith("Alerts.", StringComparison.OrdinalIgnoreCase)) return "Alerts";
+        if (key.StartsWith("Uploads.", StringComparison.OrdinalIgnoreCase)) return "Uploads";
+        if (key.StartsWith("Transfers.", StringComparison.OrdinalIgnoreCase)) return "Transfers";
+        if (key.StartsWith("Notifications.", StringComparison.OrdinalIgnoreCase)) return "Notifications";
+        if (key.StartsWith("Email.", StringComparison.OrdinalIgnoreCase)) return "Email";
+        if (key.StartsWith("Cleanup.", StringComparison.OrdinalIgnoreCase)) return "Cleanup";
+        if (key.StartsWith("Security.", StringComparison.OrdinalIgnoreCase)) return "Security";
+        return "Other";
+    }
+
+    static int CategorySort(string category) => category switch
+    {
+        "Alerts" => 10,
+        "Uploads" => 20,
+        "Transfers" => 30,
+        "Notifications" => 40,
+        "Email" => 50,
+        "Cleanup" => 60,
+        "Security" => 70,
+        _ => 100
+    };
+
+    static int SortOrder(string key)
+    {
+        if (key.Contains("FailedLogin", StringComparison.OrdinalIgnoreCase)) return 1;
+        if (key.Contains("LowDriveSpace", StringComparison.OrdinalIgnoreCase)) return 2;
+        return 50;
+    }
+
+    static bool IsBooleanSetting(string key)
+    {
+        return key.EndsWith("Enabled", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Notifications.Send", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Uploads.RequireSubject", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.EnableVirusScanning", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.QuarantineOnScanFailure", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.BlockUnscannedFiles", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.AllowOneTimeLinks", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.DefaultOneTimeLink", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Alerts.LowDriveSpaceEnabled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsIntegerSetting(string key)
+    {
+        return key.EndsWith("Days", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("MB", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("GB", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("Minutes", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("Milliseconds", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("Threshold", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("ThresholdPercent", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("MaxDownloads", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("MaxParallelFiles", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("MaxParallelChunksPerFile", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("ChunkSizeMB", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("MaxRetryAttempts", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static (int min, int max, int step, string unit, string hint) NumberRule(string key)
+    {
+        if (key.Equals("Alerts.FailedLoginThreshold", StringComparison.OrdinalIgnoreCase)) return (2, 25, 1, "attempts", "Number of failed login callbacks before an alert email is sent.");
+        if (key.Equals("Alerts.FailedLoginWindowMinutes", StringComparison.OrdinalIgnoreCase)) return (1, 1440, 1, "minutes", "Time window used to count repeated failed login attempts.");
+        if (key.Equals("Alerts.LowDriveSpaceThresholdPercent", StringComparison.OrdinalIgnoreCase)) return (1, 95, 1, "% free", "Alert when free disk percentage is at or below this value.");
+        if (key.Equals("Alerts.LowDriveSpaceThresholdGB", StringComparison.OrdinalIgnoreCase)) return (1, 10240, 1, "GB free", "Alert when free disk space is at or below this value.");
+        if (key.Equals("Alerts.LowDriveSpaceCooldownMinutes", StringComparison.OrdinalIgnoreCase)) return (5, 10080, 5, "minutes", "Minimum time between repeat low-space emails.");
+        if (key.Equals("Uploads.MaxParallelFiles", StringComparison.OrdinalIgnoreCase)) return (1, 10, 1, "files", "Maximum number of files FileDrop uploads at the same time.");
+        if (key.Equals("Uploads.MaxParallelChunksPerFile", StringComparison.OrdinalIgnoreCase)) return (1, 16, 1, "chunks", "Maximum concurrent chunks per active file.");
+        if (key.Equals("Uploads.ChunkSizeMB", StringComparison.OrdinalIgnoreCase)) return (1, 256, 1, "MB", "Chunk size used for resumable upload sessions.");
+        if (key.Equals("Uploads.MaxRetryAttempts", StringComparison.OrdinalIgnoreCase)) return (0, 20, 1, "attempts", "Retry attempts per failed chunk.");
+        if (key.Equals("Uploads.RetryDelayMilliseconds", StringComparison.OrdinalIgnoreCase)) return (250, 60000, 250, "ms", "Base retry delay after a chunk upload failure.");
+        if (key.Equals("Uploads.MaxTotalUploadMB", StringComparison.OrdinalIgnoreCase)) return (1, 102400, 1, "MB", "Maximum total upload size per transfer.");
+        if (key.Equals("Uploads.MaxSingleFileMB", StringComparison.OrdinalIgnoreCase)) return (1, 102400, 1, "MB", "Maximum size for one file.");
+        if (key.Equals("Transfers.DefaultExpirationDays", StringComparison.OrdinalIgnoreCase)) return (1, 30, 1, "days", "Default expiration for new transfers.");
+        if (key.Equals("Transfers.MaximumExpirationDays", StringComparison.OrdinalIgnoreCase)) return (1, 365, 1, "days", "Upper limit allowed for transfer expiration.");
+        if (key.Equals("Cleanup.DeleteExpiredOlderThanDays", StringComparison.OrdinalIgnoreCase)) return (1, 3650, 1, "days", "How long expired records/files are retained before cleanup.");
+        if (key.Equals("Security.DefaultMaxDownloads", StringComparison.OrdinalIgnoreCase)) return (1, 10000, 1, "downloads", "Default maximum download count when download limits are enabled.");
+        return (0, 2147483647, 1, "", "Enter a whole number.");
+    }
+
+    static bool IsLongValue(string? value, string key)
+    {
+        if (key.Contains("Emails", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("Extensions", StringComparison.OrdinalIgnoreCase)
+            || key.Contains("Bcc", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return value.Length > 70 || value.Contains(';') || value.Contains(',');
+    }
+
+    static string FriendlyName(string key)
+    {
+        var name = key.Contains('.') ? key[(key.LastIndexOf('.') + 1)..] : key;
+        return System.Text.RegularExpressions.Regex.Replace(name, "([a-z])([A-Z])", "$1 $2");
+    }
+}
 
 <section class="admin-shell">
     <aside class="admin-nav">
@@ -8,57 +169,177 @@
         <a href="/Admin/Audit">Audit Log</a>
         <a href="/Admin/Health">Health</a>
         <a class="active" href="/Admin/Settings">Settings</a>
-        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+        <a href="/Admin/AdminUsers">Admin Users</a>
+        <a href="/Admin/Uploads">Upload Manager</a>
+        <a href="/Admin/Deployment">Deployment</a>
+        <a href="/Admin/Reports">Reports</a>
+        <a href="/Admin/Email">Email Test</a>
+        <a href="/Admin/Branding">Branding</a>
+        <a href="/Admin/Entra">Entra Readiness</a>
+        <a href="/Admin/Production">Production</a>
+        <a href="/Admin/Security">Security</a>
+        <a href="/Admin/Authorization">Authorization</a>
+        <a href="/">User Home</a>
+        <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
     </aside>
 
     <div class="admin-main">
-        <h1>Settings</h1>
+        <div class="page-title-row">
+            <div>
+                <h1>Advanced Settings</h1>
+                <p class="muted">Only active operational settings are shown here. Settings with fixed valid choices use dropdowns, and numeric settings are range-limited to prevent invalid values.</p>
+            </div>
+        </div>
 
         @if (TempData["Message"] is not null)
         {
             <div class="notice">@TempData["Message"]</div>
         }
 
-        <div class="admin-card">
-            <table class="admin-table">
-                <thead>
-                    <tr>
-                        <th>Setting</th>
-                        <th>Value</th>
-                        <th>Description</th>
-                        <th>Modified</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach (var s in Model.Settings)
-                {
-                    <tr>
-                        <form method="post" action="/Admin/Settings">
-                            <td>
-                                <strong>@s.SettingKey</strong>
-                                <input type="hidden" name="key" value="@s.SettingKey" />
-                            </td>
-                            <td><input name="value" value="@s.SettingValue" /></td>
-                            <td>@s.Description</td>
-                            <td>@s.ModifiedDate.ToLocalTime()</td>
-                            <td><button type="submit">Save</button></td>
-                        </form>
-                    </tr>
-                }
-                </tbody>
-            </table>
+        <div class="settings-toolbar admin-card compact-card">
+            <input id="settingsFilter" type="search" placeholder="Find setting..." aria-label="Find setting" />
+            <span class="muted">@activeSettings.Count active setting(s)</span>
         </div>
+
+        @foreach (var group in groupedSettings)
+        {
+            <div class="admin-card settings-section" data-settings-section="@group.Key">
+                <div class="card-title-row">
+                    <h2>@group.Key</h2>
+                    <span class="badge">@group.Count()</span>
+                </div>
+
+                <div class="settings-list">
+                    @foreach (var s in group)
+                    {
+                        var isBool = IsBooleanSetting(s.SettingKey);
+                        var isInteger = IsIntegerSetting(s.SettingKey);
+                        var isLong = IsLongValue(s.SettingValue, s.SettingKey);
+                        var numberRule = NumberRule(s.SettingKey);
+                        var currentBool = string.Equals(s.SettingValue, "true", StringComparison.OrdinalIgnoreCase);
+                        <form method="post" action="/Admin/Settings" class="setting-editor" data-setting-key="@s.SettingKey" data-setting-text="@((s.SettingKey + " " + FriendlyName(s.SettingKey) + " " + s.Description + " " + s.SettingValue).ToLowerInvariant())">
+                            <input type="hidden" name="key" value="@s.SettingKey" />
+                            <div class="setting-meta">
+                                <strong>@FriendlyName(s.SettingKey)</strong>
+                                <code>@s.SettingKey</code>
+                                @if (!string.IsNullOrWhiteSpace(s.Description))
+                                {
+                                    <p>@s.Description</p>
+                                }
+                                <small>Modified @s.ModifiedDate.ToLocalTime()</small>
+                            </div>
+                            <div class="setting-value setting-value-wide">
+                                @if (isBool)
+                                {
+                                    <select class="setting-input-wide" name="value" aria-label="@FriendlyName(s.SettingKey)">
+                                        @if (currentBool)
+                                        {
+                                            <option value="true" selected>Enabled / True</option>
+                                            <option value="false">Disabled / False</option>
+                                        }
+                                        else
+                                        {
+                                            <option value="true">Enabled / True</option>
+                                            <option value="false" selected>Disabled / False</option>
+                                        }
+                                    </select>
+                                    <span class="setting-hint">Choose a valid on/off value.</span>
+                                }
+                                else if (isInteger)
+                                {
+                                    <input class="setting-input-number" name="value" type="number" value="@s.SettingValue" min="@numberRule.min" max="@numberRule.max" step="@numberRule.step" />
+                                    @if (!string.IsNullOrWhiteSpace(numberRule.unit))
+                                    {
+                                        <span class="setting-unit">@numberRule.unit</span>
+                                    }
+                                    <span class="setting-hint">@numberRule.hint Range: @numberRule.min to @numberRule.max.</span>
+                                }
+                                else if (isLong)
+                                {
+                                    <textarea class="setting-input-wide" name="value" rows="3">@s.SettingValue</textarea>
+                                    <span class="setting-hint">Use comma or semicolon separated values where applicable.</span>
+                                }
+                                else
+                                {
+                                    <input class="setting-input-wide" name="value" value="@s.SettingValue" />
+                                }
+                                <button type="submit">Save</button>
+                            </div>
+                        </form>
+                    }
+                </div>
+            </div>
+        }
     </div>
 </section>
 
 
+<style> /* Phase 52 direct Razor width fix */
+    .setting-editor {
+        display: grid !important;
+        grid-template-columns: minmax(260px, 34%) minmax(520px, 1fr) !important;
+        gap: 1.25rem !important;
+        align-items: start !important;
+    }
 
+    .setting-value-wide {
+        display: grid !important;
+        grid-template-columns: minmax(520px, 1fr) auto !important;
+        gap: .75rem !important;
+        align-items: start !important;
+        width: 100% !important;
+    }
 
+    .setting-input-wide {
+        width: 100% !important;
+        min-width: 520px !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
 
+    textarea.setting-input-wide {
+        min-height: 110px !important;
+        resize: vertical !important;
+    }
 
+    .setting-input-number {
+        width: 180px !important;
+        min-width: 180px !important;
+    }
 
+    .setting-value-wide .setting-hint,
+    .setting-value-wide .setting-unit {
+        grid-column: 1 / -1 !important;
+    }
 
+    @@media (max-width: 900px) {
+        .setting-editor,
+        .setting-value-wide {
+            grid-template-columns: 1fr !important;
+        }
 
+        .setting-input-wide {
+            min-width: 100% !important;
+        }
+    }
+</style>
 
+<script>
+(function () {
+    const filter = document.getElementById('settingsFilter');
+    if (!filter) return;
+
+    filter.addEventListener('input', function () {
+        const q = filter.value.trim().toLowerCase();
+        document.querySelectorAll('.setting-editor').forEach(row => {
+            row.style.display = !q || row.dataset.settingText.includes(q) ? '' : 'none';
+        });
+
+        document.querySelectorAll('.settings-section').forEach(section => {
+            const visibleRows = Array.from(section.querySelectorAll('.setting-editor')).some(row => row.style.display !== 'none');
+            section.style.display = visibleRows ? '' : 'none';
+        });
+    });
+})();
+</script>
 

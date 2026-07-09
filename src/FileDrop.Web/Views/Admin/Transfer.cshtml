@@ -1,4 +1,4 @@
-﻿@model FileDrop.Web.Models.AdminTransferDetailViewModel
+@model FileDrop.Web.Models.AdminTransferDetailViewModel
 @{
     string Size(long bytes)
     {
@@ -79,8 +79,8 @@
                     <button type="submit" class="warning">Disable Link</button>
                 </form>
 
-                <form method="post" action="/Admin/Transfer/@Model.Transfer.TransferId/Delete" onsubmit="return confirm('Delete this transfer record? This does not delete physical files yet.');">
-                    <button type="submit" class="danger">Delete Record</button>
+                <form method="post" action="/Admin/Transfer/@Model.Transfer.TransferId/Delete" onsubmit="return confirm('Delete this transfer and all related stored files? This cannot be undone.');">
+                    <button type="submit" class="danger">Delete Transfer and Files</button>
                 </form>
             </div>
         </div>

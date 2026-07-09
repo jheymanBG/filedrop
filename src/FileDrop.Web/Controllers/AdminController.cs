@@ -1,10 +1,9 @@
-﻿using FileDrop.Web.Models;
+using FileDrop.Web.Models;
 using FileDrop.Web.Services;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FileDrop.Web.Controllers;
 
-// TODO: Add [Authorize] after Entra admin consent is granted.
 [RequireAdminAccess]
 public sealed class AdminController : Controller
 {
@@ -31,7 +30,27 @@ public sealed class AdminController : Controller
     [HttpGet("/Admin")]
     public async Task<IActionResult> Index()
     {
-        return View(await _admin.GetDashboardAsync());
+        var model = await _admin.GetDashboardAsync();
+        ApplyStorageStatus(model);
+        return View(model);
+    }
+
+    [HttpGet("/Admin/StorageStatus")]
+    public IActionResult StorageStatus()
+    {
+        var model = new AdminDashboardViewModel();
+        ApplyStorageStatus(model);
+
+        return Json(new
+        {
+            root = model.StorageRoot,
+            drive = model.StorageDriveName,
+            totalBytes = model.StorageDriveTotalBytes,
+            usedBytes = model.StorageDriveUsedBytes,
+            freeBytes = model.StorageDriveFreeBytes,
+            freePercent = model.StorageDriveFreePercent,
+            checkedAt = model.StorageCheckedAt
+        });
     }
 
     [HttpGet("/Admin/Transfers")]
@@ -119,5 +138,37 @@ public sealed class AdminController : Controller
         TempData["Message"] = $"Deleted {count} expired transfer(s).";
         return RedirectToAction(nameof(Index));
     }
-}
 
+    private void ApplyStorageStatus(AdminDashboardViewModel model)
+    {
+        var storageRoot = _config["Storage:RootPath"]
+            ?? _config["Storage:FilesPath"]
+            ?? "C:\\SecureFileTransfer";
+
+        model.StorageRoot = storageRoot;
+        model.StorageCheckedAt = DateTime.Now;
+
+        try
+        {
+            var fullPath = Path.GetFullPath(storageRoot);
+            var root = Path.GetPathRoot(fullPath);
+            if (string.IsNullOrWhiteSpace(root))
+            {
+                return;
+            }
+
+            var drive = new DriveInfo(root);
+            model.StorageDriveName = drive.Name;
+            model.StorageDriveTotalBytes = drive.TotalSize;
+            model.StorageDriveFreeBytes = drive.AvailableFreeSpace;
+            model.StorageDriveUsedBytes = Math.Max(0, drive.TotalSize - drive.AvailableFreeSpace);
+            model.StorageDriveFreePercent = drive.TotalSize <= 0
+                ? 0
+                : Math.Round((decimal)drive.AvailableFreeSpace / drive.TotalSize * 100m, 1);
+        }
+        catch
+        {
+            model.StorageDriveName = "Unavailable";
+        }
+    }
+}

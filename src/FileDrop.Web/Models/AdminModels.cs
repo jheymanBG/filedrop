@@ -1,4 +1,4 @@
-﻿namespace FileDrop.Web.Models;
+namespace FileDrop.Web.Models;
 
 public sealed class AdminDashboardViewModel
 {
@@ -8,6 +8,15 @@ public sealed class AdminDashboardViewModel
     public int TotalFiles { get; set; }
     public long TotalStorageBytes { get; set; }
     public int DownloadsTotal { get; set; }
+
+    public string StorageRoot { get; set; } = "";
+    public string StorageDriveName { get; set; } = "";
+    public long StorageDriveTotalBytes { get; set; }
+    public long StorageDriveFreeBytes { get; set; }
+    public long StorageDriveUsedBytes { get; set; }
+    public decimal StorageDriveFreePercent { get; set; }
+    public DateTime StorageCheckedAt { get; set; } = DateTime.Now;
+
     public List<AdminTransferSummary> RecentTransfers { get; set; } = new();
     public List<AdminFileSummary> LargestFiles { get; set; } = new();
 }

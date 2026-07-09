@@ -81,6 +81,7 @@
                             <th>Progress</th>
                             <th>Received</th>
                             <th>Last Activity</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -93,11 +94,16 @@
                             <td>@upload.Percent% (@upload.ChunksReceived/@upload.TotalChunks)</td>
                             <td>@Bytes(upload.BytesReceived) / @Bytes(upload.TotalBytes)</td>
                             <td>@upload.LastActivityDate.ToLocalTime()</td>
+                            <td>
+                                <form method="post" action="/Admin/Uploads/@upload.UploadId/Delete" onsubmit="return confirm('Delete this active upload session and all related chunk files? This cannot be undone.');">
+                                    <button type="submit" class="danger mini-button">Delete</button>
+                                </form>
+                            </td>
                         </tr>
                     }
                     @if (Model.Dashboard.ActiveUploads.Count == 0)
                     {
-                        <tr><td colspan="6" class="muted">No active uploads.</td></tr>
+                        <tr><td colspan="7" class="muted">No active uploads.</td></tr>
                     }
                     </tbody>
                 </table>
@@ -191,6 +197,7 @@
                             <th>Size</th>
                             <th>Completed</th>
                             <th>SHA256</th>
+                            <th>Action</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -203,11 +210,16 @@
                             <td>@Bytes(upload.TotalBytes)</td>
                             <td>@(upload.CompletedDate?.ToLocalTime().ToString() ?? upload.LastActivityDate.ToLocalTime().ToString())</td>
                             <td class="hash">@(string.IsNullOrWhiteSpace(upload.Sha256Hash) ? "-" : upload.Sha256Hash)</td>
+                            <td>
+                                <form method="post" action="/Admin/Uploads/@upload.UploadId/Delete" onsubmit="return confirm('Delete this upload session and all related files? This cannot be undone.');">
+                                    <button type="submit" class="danger mini-button">Delete</button>
+                                </form>
+                            </td>
                         </tr>
                     }
                     @if (Model.Dashboard.RecentUploads.Count == 0)
                     {
-                        <tr><td colspan="6" class="muted">No completed, failed, or cancelled upload sessions yet.</td></tr>
+                        <tr><td colspan="7" class="muted">No completed, failed, or cancelled upload sessions yet.</td></tr>
                     }
                     </tbody>
                 </table>

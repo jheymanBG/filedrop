@@ -1112,114 +1112,312 @@ button.danger { background: #9a1f1f; }
     overflow-wrap: anywhere;
 }
 
-
-/* Phase 40 - Bowling Green branding refresh */
-.compact-header,
-.polished-header.compact-header {
-    min-height: 82px;
-    padding: 14px 42px;
+/* Phase 50 - Settings cleanup */
+.compact-card {
+    padding: 14px 16px;
 }
 
-.compact-brand,
-.polished-brand.compact-brand {
+.settings-toolbar {
     display: flex;
+    gap: 16px;
     align-items: center;
-    gap: 18px;
+    justify-content: space-between;
 }
 
-.header-logo-large,
-.header-logo-white.header-logo-large {
-    width: auto;
-    max-width: 178px;
-    max-height: 72px;
-    object-fit: contain;
-    background: transparent !important;
-    border-radius: 0 !important;
-    padding: 0 !important;
-    filter: brightness(0) invert(1);
-}
-
-.brand-divider {
-    width: 2px;
-    height: 58px;
-    background: rgba(255, 255, 255, .78);
-    flex: 0 0 auto;
-}
-
-.brand-title-block {
-    display: grid;
-    gap: 4px;
-}
-
-.polished-header.compact-header .brand {
-    font-size: 28px;
-    line-height: 1.05;
-}
-
-.polished-header.compact-header .subbrand {
-    font-size: 18px;
-    line-height: 1.2;
-}
-
-.transfer-created-card {
-    max-width: 760px;
-    margin-left: auto;
-    margin-right: auto;
-    text-align: center;
-}
-
-.success-logo {
-    display: block;
-    width: auto;
-    max-width: 220px;
-    max-height: 112px;
-    object-fit: contain;
-    margin: 0 auto 22px;
-    border-radius: 0;
-    background: transparent;
-}
-
-.transfer-created-card .success-icon {
-    margin-bottom: 18px;
-}
-
-.transfer-created-card h1 {
+.settings-toolbar input {
+    max-width: 520px;
     margin-top: 0;
-    margin-bottom: 10px;
-    font-size: 34px;
 }
 
-.transfer-created-card label {
-    text-align: center;
+.settings-section h2 {
+    margin-top: 0;
 }
 
-@media (max-width: 720px) {
-    .compact-header,
-    .polished-header.compact-header {
-        min-height: auto;
-        padding: 16px 20px;
+.settings-list {
+    display: grid;
+    gap: 14px;
+}
+
+.setting-editor {
+    display: grid;
+    grid-template-columns: minmax(280px, 0.85fr) minmax(420px, 1.15fr);
+    gap: 22px;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fbfdfb;
+}
+
+.setting-meta strong {
+    display: block;
+    font-size: 17px;
+    margin-bottom: 6px;
+}
+
+.setting-meta code {
+    display: inline-block;
+    font-family: Consolas, monospace;
+    font-size: 12px;
+    color: var(--green);
+    background: #e9f1eb;
+    border-radius: 999px;
+    padding: 4px 8px;
+    word-break: break-all;
+}
+
+.setting-meta p {
+    color: var(--muted);
+    margin: 10px 0 8px;
+}
+
+.setting-meta small {
+    color: var(--muted);
+}
+
+.setting-value {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: start;
+    gap: 12px;
+}
+
+.setting-value input,
+.setting-value textarea {
+    width: 100%;
+    min-width: 0;
+    margin-top: 0;
+}
+
+.setting-value textarea {
+    min-height: 88px;
+    resize: vertical;
+}
+
+.setting-value button {
+    margin-top: 0;
+    white-space: nowrap;
+}
+
+@media (max-width: 1000px) {
+    .setting-editor {
+        grid-template-columns: 1fr;
     }
 
-    .header-logo-large,
-    .header-logo-white.header-logo-large {
-        max-width: 142px;
-        max-height: 58px;
+    .setting-value {
+        grid-template-columns: 1fr;
     }
 
-    .brand-divider {
-        display: none;
-    }
-
-    .polished-header.compact-header .brand {
-        font-size: 23px;
-    }
-
-    .polished-header.compact-header .subbrand {
-        font-size: 16px;
-    }
-
-    .success-logo {
-        max-width: 180px;
-        max-height: 92px;
+    .setting-value button {
+        justify-self: start;
     }
 }
+
+
+/* Phase 51 - validated settings editors */
+.setting-value select,
+.setting-value input[type="number"] {
+    width: 100%;
+    max-width: 640px;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid #cfd8d3;
+    border-radius: 8px;
+    background: #fff;
+    color: #1f3028;
+    font-size: 0.95rem;
+}
+
+.setting-value .setting-hint {
+    display: block;
+    margin-top: 0.35rem;
+    color: #60756a;
+    font-size: 0.82rem;
+}
+
+.setting-value .setting-unit {
+    display: inline-block;
+    margin-left: 0.4rem;
+    color: #60756a;
+    font-size: 0.85rem;
+}
+
+/* FileDrop Phase 52 - Settings field width fix */
+/* Make Advanced Settings usable for long email, URL, GUID, and semicolon/comma lists. */
+.admin-main,
+.settings-page,
+.settings-admin-page {
+    --fd-settings-value-min: 34rem;
+    --fd-settings-value-max: 48rem;
+}
+
+/* Widen common setting card/grid layouts introduced in later v0.8 phases. */
+.admin-main .settings-grid,
+.admin-main .settings-list,
+.admin-main .settings-section,
+.admin-main .settings-group,
+.admin-main .settings-card-list,
+.admin-main .advanced-settings-list {
+    width: 100%;
+    max-width: none;
+}
+
+.admin-main .setting-card,
+.admin-main .settings-card,
+.admin-main .advanced-setting-card,
+.admin-main .setting-row,
+.admin-main .settings-row {
+    width: 100%;
+    max-width: none;
+}
+
+/* If a setting is rendered as a CSS grid, reserve much more space for the editable value. */
+.admin-main .setting-card form,
+.admin-main .settings-card form,
+.admin-main .advanced-setting-card form,
+.admin-main .setting-row form,
+.admin-main .settings-row form {
+    grid-template-columns: minmax(250px, 1.1fr) minmax(34rem, 2.2fr) minmax(220px, 1fr) !important;
+    column-gap: 1.25rem;
+    align-items: start;
+}
+
+/* Make value controls wide by default. */
+.admin-main input[name="value"],
+.admin-main textarea[name="value"],
+.admin-main select[name="value"],
+.admin-main .setting-value input,
+.admin-main .setting-value textarea,
+.admin-main .setting-value select,
+.admin-main .settings-value input,
+.admin-main .settings-value textarea,
+.admin-main .settings-value select,
+.admin-main .setting-control input,
+.admin-main .setting-control textarea,
+.admin-main .setting-control select,
+.admin-main .advanced-setting-value input,
+.admin-main .advanced-setting-value textarea,
+.admin-main .advanced-setting-value select {
+    width: 100% !important;
+    min-width: var(--fd-settings-value-min) !important;
+    max-width: var(--fd-settings-value-max) !important;
+    box-sizing: border-box;
+}
+
+/* Email/list values should not be squeezed into tiny scroll boxes. */
+.admin-main textarea[name="value"],
+.admin-main .setting-value textarea,
+.admin-main .settings-value textarea,
+.admin-main .setting-control textarea,
+.admin-main .advanced-setting-value textarea {
+    min-height: 4.5rem;
+    resize: vertical;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+/* Numeric and boolean fields can remain moderate width. */
+.admin-main input[type="number"][name="value"],
+.admin-main select[name="value"] {
+    min-width: 18rem !important;
+    max-width: 28rem !important;
+}
+
+/* Save buttons should not steal horizontal room from the value field. */
+.admin-main .setting-card button[type="submit"],
+.admin-main .settings-card button[type="submit"],
+.admin-main .advanced-setting-card button[type="submit"],
+.admin-main .setting-row button[type="submit"],
+.admin-main .settings-row button[type="submit"] {
+    min-width: 7rem;
+}
+
+@media (max-width: 1100px) {
+    .admin-main .setting-card form,
+    .admin-main .settings-card form,
+    .admin-main .advanced-setting-card form,
+    .admin-main .setting-row form,
+    .admin-main .settings-row form {
+        grid-template-columns: 1fr !important;
+    }
+
+    .admin-main input[name="value"],
+    .admin-main textarea[name="value"],
+    .admin-main select[name="value"],
+    .admin-main .setting-value input,
+    .admin-main .setting-value textarea,
+    .admin-main .setting-value select,
+    .admin-main .settings-value input,
+    .admin-main .settings-value textarea,
+    .admin-main .settings-value select,
+    .admin-main .setting-control input,
+    .admin-main .setting-control textarea,
+    .admin-main .setting-control select,
+    .admin-main .advanced-setting-value input,
+    .admin-main .advanced-setting-value textarea,
+    .admin-main .advanced-setting-value select {
+        min-width: 100% !important;
+        max-width: 100% !important;
+    }
+}
+/* End FileDrop Phase 52 */
+
+
+/* Phase 52 direct fix - widen admin settings value fields */
+.admin-settings .setting-card,
+.settings-card,
+.setting-row {
+    width: 100%;
+}
+
+.admin-settings input[type="text"],
+.admin-settings input[type="email"],
+.admin-settings input[type="number"],
+.admin-settings select,
+.admin-settings textarea,
+.settings-card input[type="text"],
+.settings-card input[type="email"],
+.settings-card input[type="number"],
+.settings-card select,
+.settings-card textarea,
+.setting-row input[type="text"],
+.setting-row input[type="email"],
+.setting-row input[type="number"],
+.setting-row select,
+.setting-row textarea,
+input[name="value"],
+textarea[name="value"],
+select[name="value"] {
+    width: 100% !important;
+    min-width: 520px !important;
+    max-width: 100% !important;
+    box-sizing: border-box;
+}
+
+.admin-settings textarea,
+.settings-card textarea,
+.setting-row textarea,
+textarea[name="value"] {
+    min-height: 110px !important;
+    resize: vertical;
+}
+
+.setting-value,
+.settings-value,
+.admin-setting-value,
+.setting-control,
+.settings-control {
+    flex: 1 1 620px !important;
+    min-width: 620px !important;
+}
+
+.setting-row form,
+.settings-card form,
+.admin-settings form {
+    width: 100%;
+}
+
+.setting-row .form-control,
+.settings-card .form-control,
+.admin-settings .form-control {
+    width: 100% !important;
+}
+

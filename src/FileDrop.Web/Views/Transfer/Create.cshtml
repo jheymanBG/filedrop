@@ -36,14 +36,14 @@
         <label for="Message">Message</label>
         <textarea name="Message" id="Message" rows="5" placeholder="Optional message to the recipient"></textarea>
 
-        <div class="grid two">
-            <div class="checkbox-card">
-                <label class="checkbox-label">
-                    <input name="DisableAfterFirstDownload" value="true" type="checkbox" />
+        <div class="grid two transfer-options-grid">
+            <div class="one-time-option">
+                <label class="one-time-label" for="DisableAfterFirstDownload">
                     <span>
                         <strong>Disable After First Download</strong>
                         <small>Creates a one-time link. After the first download, the link is automatically disabled.</small>
                     </span>
+                    <input id="DisableAfterFirstDownload" name="DisableAfterFirstDownload" value="true" type="checkbox" />
                 </label>
             </div>
             <div>
@@ -51,11 +51,6 @@
                 <input name="MaxDownloads" id="MaxDownloads" type="number" min="1" placeholder="Unlimited" />
                 <small>Optional. Leave blank for unlimited downloads until expiration.</small>
             </div>
-        </div>
-
-        <div class="policy-note">
-            <strong>v0.8.0 Phase 37 Production Upload Engine</strong><br />
-            Drag files below. Uploads are chunked, resumable, queued, and finalized automatically before the transfer email is sent.
         </div>
 
         <label>Files</label>

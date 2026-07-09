@@ -1,4 +1,4 @@
-﻿namespace FileDrop.Web.Models;
+namespace FileDrop.Web.Models;
 
 public sealed class AppSettingRecord
 {
@@ -11,6 +11,19 @@ public sealed class AppSettingRecord
 public sealed class SettingsViewModel
 {
     public List<AppSettingRecord> Settings { get; set; } = new();
+
+    public bool EnableLoginFailureAlerts { get; set; } = true;
+    public string LoginFailureAlertEmail { get; set; } = "jheyman@bgohio.gov";
+    public int LoginFailureAlertThreshold { get; set; } = 3;
+    public int LoginFailureWindowMinutes { get; set; } = 15;
+    public int LoginFailureAlertCooldownMinutes { get; set; } = 30;
+
+    public bool EnableLowDiskSpaceAlerts { get; set; } = true;
+    public string LowDiskSpaceAlertEmails { get; set; } = "jheyman@bgohio.gov";
+    public int LowDiskSpaceThresholdPercentFree { get; set; } = 10;
+    public int LowDiskSpaceThresholdFreeGb { get; set; } = 25;
+    public int LowDiskSpaceCheckIntervalMinutes { get; set; } = 30;
+    public int LowDiskSpaceAlertCooldownMinutes { get; set; } = 120;
 }
 
 public sealed class HealthCheckViewModel

@@ -4,6 +4,14 @@
     const maxParallelChunksPerFile = 4;
     const maxChunkRetries = 3;
 
+    const blockedExtensions = new Set([
+        '.ade', '.adp', '.apk', '.app', '.appx', '.appxbundle', '.bat', '.cab', '.chm', '.cmd', '.com', '.cpl',
+        '.dll', '.dmg', '.exe', '.gadget', '.hta', '.ins', '.iso', '.isp', '.jar', '.jnlp', '.js', '.jse',
+        '.lib', '.lnk', '.mde', '.msc', '.msi', '.msix', '.msixbundle', '.msp', '.mst', '.osx', '.pif',
+        '.ps1', '.ps1xml', '.ps2', '.ps2xml', '.psc1', '.psc2', '.psd1', '.psm1', '.reg', '.scr', '.sh',
+        '.sys', '.vb', '.vbe', '.vbs', '.vxd', '.ws', '.wsc', '.wsf', '.wsh'
+    ]);
+
     const form = document.getElementById('transferForm');
     const filesInput = document.getElementById('files');
     const dropZone = document.getElementById('dropZone');
@@ -21,11 +29,11 @@
     let isUploading = false;
     let abortRequested = false;
     const uploadControllers = new Map();
-    const fileAttemptIds = new WeakMap();
+    const fileClientIds = new WeakMap();
 
     function newGuid() {
         if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
             const r = Math.random() * 16 | 0;
             const v = c === 'x' ? r : (r & 0x3 | 0x8);
             return v.toString(16);
@@ -57,17 +65,32 @@
             .replaceAll("'", '&#039;');
     }
 
-    function fileClientId(file) {
-        // Phase 42: every file selection gets its own client upload attempt id.
-        // This allows the same file to be uploaded multiple times without reusing a completed session.
-        if (!fileAttemptIds.has(file)) {
-            fileAttemptIds.set(file, `${newGuid()}|${file.name}|${file.size}|${file.lastModified}`);
-        }
-        return fileAttemptIds.get(file);
+    function getExtension(fileName) {
+        const safe = (fileName || '').toLowerCase();
+        const index = safe.lastIndexOf('.');
+        return index >= 0 ? safe.substring(index) : '';
     }
 
-    function rowId(file) {
-        return fileClientId(file);
+    function isBlockedFile(file) {
+        const ext = getExtension(file.name);
+        return ext && blockedExtensions.has(ext);
+    }
+
+    function describeBlockedFiles(files) {
+        return files.map(file => `${file.name} (${getExtension(file.name) || 'no extension'})`).join('\n');
+    }
+
+    function warnBlockedFiles(blocked) {
+        if (!blocked.length) return;
+        const plural = blocked.length === 1 ? 'This file type is not allowed' : 'These file types are not allowed';
+        alert(`${plural} and will not be uploaded:\n\n${describeBlockedFiles(blocked)}\n\nRemove the blocked file(s) and choose an allowed file type.`);
+    }
+
+    function fileClientId(file) {
+        if (!fileClientIds.has(file)) {
+            fileClientIds.set(file, `${newGuid()}|${file.name}|${file.size}|${file.lastModified}`);
+        }
+        return fileClientIds.get(file);
     }
 
     async function sha256Hex(blob) {
@@ -77,7 +100,14 @@
     }
 
     function setFiles(files) {
-        selectedFiles = Array.from(files || []);
+        const incoming = Array.from(files || []);
+        const blocked = incoming.filter(isBlockedFile);
+        const allowed = incoming.filter(file => !isBlockedFile(file));
+
+        if (blocked.length > 0) warnBlockedFiles(blocked);
+
+        selectedFiles = allowed;
+        filesInput.value = '';
         renderSummary();
     }
 
@@ -104,7 +134,7 @@
     function createRow(file) {
         const row = document.createElement('div');
         row.className = 'upload-progress-row queued';
-        row.dataset.clientId = rowId(file);
+        row.dataset.clientId = fileClientId(file);
         row.innerHTML = `
             <div class="upload-progress-title">
                 <strong>${escapeHtml(file.name)}</strong>
@@ -119,7 +149,7 @@
     }
 
     function updateRow(file, percent, status, metrics) {
-        const row = progressList.querySelector(`[data-client-id="${CSS.escape(rowId(file))}"]`);
+        const row = progressList.querySelector(`[data-client-id="${CSS.escape(fileClientId(file))}"]`);
         if (!row) return;
         row.classList.remove('queued', 'failed');
         row.querySelector('.progress-fill').style.width = `${Math.max(0, Math.min(100, percent))}%`;
@@ -130,7 +160,7 @@
     }
 
     function failRow(file, message) {
-        const row = progressList.querySelector(`[data-client-id="${CSS.escape(rowId(file))}"]`);
+        const row = progressList.querySelector(`[data-client-id="${CSS.escape(fileClientId(file))}"]`);
         if (!row) return;
         row.classList.add('failed');
         row.querySelector('.upload-status').textContent = 'Failed';
@@ -154,8 +184,7 @@
                 totalBytes: file.size,
                 chunkSizeBytes: chunkSize,
                 clientFileId: fileClientId(file),
-                lastModifiedTicks: file.lastModified,
-                forceNewUploadAttempt: true
+                lastModifiedTicks: file.lastModified
             })
         });
     }
@@ -214,7 +243,6 @@
         } catch { }
     }
 
-
     function getAntiForgeryToken() {
         const token = form.querySelector('input[name="__RequestVerificationToken"]');
         return token ? token.value : '';
@@ -261,6 +289,12 @@
     }
 
     async function uploadFile(file) {
+        if (isBlockedFile(file)) {
+            const message = `${file.name} is not allowed and was not uploaded.`;
+            failRow(file, message);
+            throw new Error(message);
+        }
+
         const startedAt = Date.now();
         updateRow(file, 0, 'Starting', formatBytes(file.size));
         const session = await startUpload(file);
@@ -320,6 +354,14 @@
         if (isUploading) return;
         if (selectedFiles.length === 0) {
             alert('Choose one or more files first.');
+            return;
+        }
+
+        const blocked = selectedFiles.filter(isBlockedFile);
+        if (blocked.length > 0) {
+            warnBlockedFiles(blocked);
+            selectedFiles = selectedFiles.filter(file => !isBlockedFile(file));
+            renderSummary();
             return;
         }
 

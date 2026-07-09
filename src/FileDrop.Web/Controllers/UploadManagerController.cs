@@ -83,6 +83,18 @@ public sealed class UploadManagerController : Controller
         return RedirectToAction(nameof(Index));
     }
 
+
+    [HttpPost("/Admin/Uploads/{uploadId:guid}/Delete")]
+    public async Task<IActionResult> DeleteUpload(Guid uploadId)
+    {
+        var count = await _cleanup.DeleteUploadSessionAndFilesAsync(uploadId);
+        await _audit.WriteAsync(null, User?.Identity?.Name, "Upload Session Deleted", $"UploadId={uploadId}; Deleted={count}", HttpContext.Connection.RemoteIpAddress?.ToString());
+        TempData["Message"] = count == 0
+            ? "Upload session was not found."
+            : "Upload session, chunk records, temporary files, and final stored file were deleted.";
+        return RedirectToAction(nameof(Index));
+    }
+
     [HttpPost("/Admin/Uploads/CleanupExpiredTransfers")]
     public async Task<IActionResult> CleanupExpiredTransfers(int olderThanDays = 0)
     {

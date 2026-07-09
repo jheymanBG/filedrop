@@ -1,4 +1,4 @@
-﻿using FileDrop.Web.Services;
+using FileDrop.Web.Services;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
 using Microsoft.Identity.Web;
 using Microsoft.Identity.Web.UI;
@@ -17,6 +17,18 @@ builder.Services
     .AddAuthentication(OpenIdConnectDefaults.AuthenticationScheme)
     .AddMicrosoftIdentityWebApp(builder.Configuration.GetSection("AzureAd"));
 
+builder.Services.Configure<OpenIdConnectOptions>(OpenIdConnectDefaults.AuthenticationScheme, options =>
+{
+    options.Events.OnRemoteFailure = async context =>
+    {
+        var alertService = context.HttpContext.RequestServices.GetRequiredService<ILoginFailureAlertService>();
+        await alertService.RecordFailureAsync(context.Failure, context.HttpContext);
+
+        context.HandleResponse();
+        context.Response.Redirect("/Home/Error");
+    };
+});
+
 builder.Services.AddAuthorization(options =>
 {
     options.FallbackPolicy = null;
@@ -33,6 +45,8 @@ builder.Services.AddSingleton<IStorageService, StorageService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<ITransferRepository, TransferRepository>();
 builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<ILoginFailureAlertService, LoginFailureAlertService>();
 builder.Services.AddScoped<IAdminRepository, AdminRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
 builder.Services.AddScoped<ICleanupService, CleanupService>();
@@ -56,6 +70,7 @@ builder.Services.AddScoped<IEnterpriseAuthorizationService, EnterpriseAuthorizat
 builder.Services.AddScoped<IEntraValidationService, EntraValidationService>();
 builder.Services.AddHostedService<ChunkedUploadCleanupHostedService>();
 builder.Services.AddHostedService<RetentionCleanupHostedService>();
+builder.Services.AddHostedService<LowDiskSpaceMonitorHostedService>();
 
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = null);
 builder.Services.Configure<IISServerOptions>(options => options.MaxRequestBodySize = null);

@@ -8,12 +8,26 @@ namespace FileDrop.Web.Controllers;
 [Authorize]
 public sealed class ChunkedUploadController : Controller
 {
+    private static readonly string[] DefaultBlockedExtensions =
+    {
+        ".ade", ".adp", ".apk", ".app", ".appx", ".appxbundle", ".bat", ".cab", ".chm", ".cmd", ".com", ".cpl",
+        ".dll", ".dmg", ".exe", ".gadget", ".hta", ".ins", ".iso", ".isp", ".jar", ".jnlp", ".js", ".jse",
+        ".lib", ".lnk", ".mde", ".msc", ".msi", ".msix", ".msixbundle", ".msp", ".mst", ".osx", ".pif",
+        ".ps1", ".ps1xml", ".ps2", ".ps2xml", ".psc1", ".psc2", ".psd1", ".psm1", ".reg", ".scr", ".sh",
+        ".sys", ".vb", ".vbe", ".vbs", ".vxd", ".ws", ".wsc", ".wsf", ".wsh"
+    };
+
     private readonly IChunkedUploadService _chunks;
+    private readonly IConfiguration _config;
     private readonly ILogger<ChunkedUploadController> _logger;
 
-    public ChunkedUploadController(IChunkedUploadService chunks, ILogger<ChunkedUploadController> logger)
+    public ChunkedUploadController(
+        IChunkedUploadService chunks,
+        IConfiguration config,
+        ILogger<ChunkedUploadController> logger)
     {
         _chunks = chunks;
+        _config = config;
         _logger = logger;
     }
 
@@ -22,8 +36,21 @@ public sealed class ChunkedUploadController : Controller
     {
         try
         {
-            var result = await _chunks.StartAsync(HttpContext, request);
-            return Json(ToStartDto(result));
+            var blockedMessage = GetBlockedFileMessage(request.FileName);
+            if (!string.IsNullOrWhiteSpace(blockedMessage))
+            {
+                _logger.LogWarning("Blocked upload attempt. FileName={FileName}; RemoteIp={RemoteIp}",
+                    request.FileName,
+                    HttpContext.Connection.RemoteIpAddress?.ToString());
+
+                return BadRequest(new
+                {
+                    error = blockedMessage,
+                    code = "blocked_file_type"
+                });
+            }
+
+            return Json(await _chunks.StartAsync(HttpContext, request));
         }
         catch (Exception ex)
         {
@@ -44,8 +71,7 @@ public sealed class ChunkedUploadController : Controller
                 return BadRequest(new { error = "Chunk is missing." });
             }
 
-            var result = await _chunks.SaveChunkAsync(uploadId, chunkIndex, chunk, chunkSha256, cancellationToken);
-            return Json(ToStatusDto(result, chunkIndex, result.AlreadyReceived));
+            return Json(await _chunks.SaveChunkAsync(uploadId, chunkIndex, chunk, chunkSha256, cancellationToken));
         }
         catch (Exception ex)
         {
@@ -59,8 +85,7 @@ public sealed class ChunkedUploadController : Controller
     {
         try
         {
-            var result = await _chunks.CompleteAsync(request.UploadId, cancellationToken);
-            return Json(ToStatusDto(result));
+            return Json(await _chunks.CompleteAsync(request.UploadId, cancellationToken));
         }
         catch (Exception ex)
         {
@@ -74,8 +99,7 @@ public sealed class ChunkedUploadController : Controller
     {
         try
         {
-            var result = await _chunks.CancelAsync(HttpContext, request.UploadId);
-            return Json(ToStatusDto(result));
+            return Json(await _chunks.CancelAsync(HttpContext, request.UploadId));
         }
         catch (Exception ex)
         {
@@ -94,42 +118,44 @@ public sealed class ChunkedUploadController : Controller
     public async Task<IActionResult> Status(Guid uploadId)
     {
         var status = await _chunks.GetStatusAsync(uploadId);
-        return status is null ? NotFound() : Json(ToStatusDto(status));
+        return status is null ? NotFound() : Json(status);
     }
 
-    private static object ToStartDto(StartChunkedUploadResponse result) => new
+    private string? GetBlockedFileMessage(string? fileName)
     {
-        uploadId = result.UploadId,
-        totalChunks = result.TotalChunks,
-        chunkSizeBytes = result.ChunkSizeBytes,
-        status = result.Status,
-        completedChunks = result.CompletedChunks,
-        bytesReceived = result.BytesReceived,
-        totalBytes = result.TotalBytes,
-        percent = result.Percent,
-        alreadyComplete = result.AlreadyComplete
-    };
+        if (string.IsNullOrWhiteSpace(fileName)) return "File name is required.";
 
-    private static object ToStatusDto(ChunkedUploadStatus result, int? chunkIndex = null, bool? alreadyReceived = null) => new
+        var extension = Path.GetExtension(fileName).ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(extension)) return null;
+
+        var blocked = GetBlockedExtensions();
+        if (!blocked.Contains(extension)) return null;
+
+        return $"{Path.GetFileName(fileName)} is not allowed. Files with the {extension} extension cannot be uploaded.";
+    }
+
+    private HashSet<string> GetBlockedExtensions()
     {
-        uploadId = result.UploadId,
-        status = result.Status,
-        chunksReceived = result.ChunksReceived,
-        totalChunks = result.TotalChunks,
-        completedChunks = result.CompletedChunks,
-        bytesReceived = result.BytesReceived,
-        totalBytes = result.TotalBytes,
-        percent = result.Percent,
-        originalFileName = result.OriginalFileName,
-        storedFileName = result.StoredFileName,
-        storagePath = result.StoragePath,
-        sha256Hash = result.Sha256Hash,
-        expectedSha256Hash = result.ExpectedSha256Hash,
-        clientFileId = result.ClientFileId,
-        createdDate = result.CreatedDate,
-        completedDate = result.CompletedDate,
-        lastActivityDate = result.LastActivityDate,
-        chunkIndex,
-        alreadyReceived
-    };
+        var configured = _config["Uploads:BlockedExtensions"]
+            ?? _config["Security:BlockedUploadExtensions"]
+            ?? string.Empty;
+
+        var configuredItems = configured
+            .Split(',', ';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(NormalizeExtension)
+            .Where(x => !string.IsNullOrWhiteSpace(x));
+
+        return DefaultBlockedExtensions
+            .Concat(configuredItems!)
+            .Select(NormalizeExtension)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeExtension(string value)
+    {
+        value = (value ?? string.Empty).Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
+        return value.StartsWith('.') ? value : "." + value;
+    }
 }

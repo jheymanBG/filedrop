@@ -1,4 +1,4 @@
-﻿@model FileDrop.Web.Models.AdminTransferSearchViewModel
+@model FileDrop.Web.Models.AdminTransferSearchViewModel
 @{
     string Size(long bytes)
     {
@@ -38,7 +38,7 @@
         <div class="admin-card">
             <table class="admin-table">
                 <thead>
-                    <tr><th>Subject</th><th>Sender</th><th>Recipient</th><th>Files</th><th>Size</th><th>Created</th><th>Expires</th><th>Downloads</th><th>Status</th></tr>
+                    <tr><th>Subject</th><th>Sender</th><th>Recipient</th><th>Files</th><th>Size</th><th>Created</th><th>Expires</th><th>Downloads</th><th>Status</th><th>Action</th></tr>
                 </thead>
                 <tbody>
                 @foreach (var t in Model.Results)
@@ -53,6 +53,11 @@
                         <td>@t.ExpirationDate.ToLocalTime()</td>
                         <td>@t.DownloadCount</td>
                         <td><span class="badge @t.Status.ToLowerInvariant()">@t.Status</span></td>
+                        <td>
+                            <form method="post" action="/Admin/Transfer/@t.TransferId/Delete" onsubmit="return confirm('Delete this transfer and all related files? This cannot be undone.');">
+                                <button type="submit" class="danger mini-button">Delete</button>
+                            </form>
+                        </td>
                     </tr>
                 }
                 </tbody>
