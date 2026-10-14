@@ -20,7 +20,7 @@ foreach($key in @('FilesPath','TempPath','QuarantinePath','LogsPath')) {
 $conn=$config.ConnectionStrings.DefaultConnection
 if ($conn -notmatch '(?i)(Database|Initial Catalog)\s*=\s*FileDrop_Test\s*(;|$)') { throw 'Test database required.' }
 if ($config.Notifications.SendDownloadNotification -ne $false -or $config.Notifications.SendSenderConfirmation -ne $false) { throw 'Outbound notifications must initially be disabled.' }
-if (-not $config.AzureAd.ClientId -or -not $config.AzureAd.TenantId) { throw 'Dedicated test Entra configuration required.' }
+if (-not $config.AzureAd.ClientId -or -not $config.AzureAd.TenantId) { throw 'Entra TenantId and ClientId required (may share production registration).' }
 $cert=Get-Item "Cert:\LocalMachine\My\$($CertificateThumbprint -replace ' ','')" -ErrorAction Stop
 if (-not $cert.HasPrivateKey -or $cert.NotAfter -lt (Get-Date)) { throw 'Invalid certificate.' }
 if (-not ($cert.DnsNameList | Where-Object { $_.Unicode -eq $hostName -or $_.Unicode -eq '*.bgohio.gov' })) { throw 'Certificate does not cover test hostname.' }
