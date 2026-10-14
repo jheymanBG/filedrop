@@ -6,7 +6,7 @@ IMPORTANT: GitHub main is an older snapshot, NOT the confirmed Phase 72 producti
 
 ## Prerequisites
 1. Create testdrop.bgohio.gov DNS and valid SNI-capable HTTPS certificate.
-2. Create separate Entra app registration, restrict test users, add redirect https://testdrop.bgohio.gov/signin-oidc.
+2. Reuse the existing FileDrop Entra registration: retain the production redirect URI and add https://testdrop.bgohio.gov/signin-oidc under Web. Keep the same TenantId and ClientId; configure the test callback URL and restrict testing access at IIS/application level because Entra app user assignments are shared.
 3. Create FileDrop_Test SQL database and separate least-privilege SQL login. Apply schema/migrations ONLY in TestDrop.
 4. Stage a verified publish at C:\Build\TestDrop\Publish (no production secrets).
 5. Create a host-local appsettings.TestDrop.json under C:\Build\TestDrop containing fully isolated Application.HostName, Storage.RootPath/FilesPath/TempPath/QuarantinePath/LogsPath, ConnectionStrings.DefaultConnection (Database=FileDrop_Test), AzureAd.ClientId/TenantId and other required identity settings. Set Notifications.SendDownloadNotification=false and Notifications.SendSenderConfirmation=false. DO NOT COMMIT SECRETS.
