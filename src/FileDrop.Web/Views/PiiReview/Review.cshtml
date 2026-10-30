@@ -1,0 +1,263 @@
+@model FileDrop.Web.Models.PiiReviewUploadViewModel
+@{ ViewData["Title"] = "Review PII Warnings"; }
+<div class="container py-4">
+<h1>Review PII Warnings</h1>
+<p>Review the potential PII detected in your file. If you believe these findings are incorrect, you can submit them to a GIS administrator for review. Your file will remain blocked during the review.</p>
+@if (TempData["Message"] is string message) { <div class="alert alert-info">@message</div> }
+<dl><dt>File</dt><dd>@Model.Scan.OriginalFileName</dd><dt>Categories</dt><dd>@Model.Scan.Categories</dd><dt>Findings</dt><dd>@Model.Scan.FindingCount</dd><dt>Scan result</dt><dd>@Model.Scan.Result</dd></dl>
+<h2 class="h5">Masked findings</h2>
+@if (Model.Findings.Count == 0) { <p>Individual findings are not available for this scan.</p> }
+else { <ul> @foreach (var f in Model.Findings) { <li>@f.Category — @f.Confidence confidence; @(f.PageNumber.HasValue ? $"Page {f.PageNumber}" : "Page unavailable"); @f.MaskedEvidence — @f.DetectionReason</li> } </ul> }
+@if (ViewBag.ReviewStatus != null) { <p>Review status: <strong>@ViewBag.ReviewStatus</strong></p> }
+else {
+<form method="post" action="/Upload/PiiReview/Submit">
+@Html.AntiForgeryToken()
+<input type="hidden" name="UploadId" value="@Model.UploadId" />
+<div id="original-transfer-details" class="mb-3">
+<label class="form-label" for="originalRecipient">Original recipient email</label>
+<input class="form-control" type="email" id="originalRecipient" name="RecipientEmail" required maxlength="255" readonly />
+<input type="hidden" id="originalSubject" name="Subject" />
+<input type="hidden" id="originalMessage" name="Message" />
+<input type="hidden" id="originalExpiration" name="ExpirationDays" value="7" />
+<input type="hidden" id="originalMaximum" name="MaxDownloads" />
+<input type="hidden" id="originalOneTime" name="DisableAfterFirstDownload" value="false" />
+<p id="missingOriginalWarning" class="text-danger" hidden>Original transfer information could not be recovered. Return to New Transfer and resubmit the file before requesting approval.</p>
+</div>
+<div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="Acknowledged" value="true" required id="agree" /><label for="agree" class="form-check-label">I have reviewed the flagged information and believe it does not contain restricted personal information. I understand that a GIS administrator must review this request.</label></div>
+<label for="reason" class="form-label">Explanation (at least 15 characters)</label>
+<textarea id="reason" name="Justification" class="form-control mb-3" minlength="15" maxlength="2000" required rows="4"></textarea>
+<button class="btn btn-primary" type="submit">Submit for GIS review</button>
+</form>
+}
+</div>
+
+
+<script>
+(function () {
+ const id = '@Model.UploadId';
+ const form = document.querySelector('form[action="/Upload/PiiReview/Submit"]');
+ if (!form) return;
+ let payload = null;
+ try { payload = JSON.parse((localStorage.getItem('filedrop-pii-transfer-' + id) || sessionStorage.getItem('filedrop-pii-transfer-' + id)) || 'null'); } catch (_) {}
+ const fresh = payload && (!payload.savedAt ||
+    (Date.now() >= payload.savedAt &&
+     Date.now() - payload.savedAt <= 24 * 60 * 60 * 1000));
+ const valid = fresh && /^[^\s@@]+@@[^\s@@]+\.[^\s@@]+$/.test(payload.recipientEmail || '') &&
+       Number.isInteger(Number(payload.expirationDays)) && Number(payload.expirationDays) >= 1 && Number(payload.expirationDays) <= 30;
+ if (!valid) {
+    document.getElementById('missingOriginalWarning').hidden = false;
+    form.querySelector('button[type="submit"]').disabled = true;
+    return;
+ }
+ const set = (id, value) => { document.getElementById(id).value = value ?? ''; };
+ set('originalRecipient', payload.recipientEmail);
+ set('originalSubject', payload.subject);
+ set('originalMessage', payload.message);
+ set('originalExpiration', payload.expirationDays);
+ set('originalMaximum', payload.maxDownloads);
+ set('originalOneTime', payload.disableAfterFirstDownload ? 'true' : 'false');
+})();
+</script>
+
+<!-- Phase73D2ReviewCards -->
+<style>
+    .pii-review-card-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 370px), 1fr));
+        gap: 16px;
+        margin: 18px 0 28px;
+    }
+
+    .pii-review-card {
+        border: 1px solid #d9e1e5;
+        border-radius: 10px;
+        background: #fff;
+        padding: 18px;
+        overflow-wrap: anywhere;
+    }
+
+    .pii-review-card-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+
+    .pii-review-card-category {
+        font-weight: 700;
+        font-size: 1.05rem;
+    }
+
+    .pii-review-confidence {
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 5px 9px;
+        border-radius: 999px;
+        background: #eef1f4;
+        color: #374151;
+    }
+
+    .pii-review-confidence.high {
+        background: #fce8e8;
+        color: #991b1b;
+    }
+
+    .pii-review-confidence.medium {
+        background: #fff4d6;
+        color: #7c4a00;
+    }
+
+    .pii-review-fields {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin-bottom: 14px;
+    }
+
+    .pii-review-field-label {
+        display: block;
+        color: #64748b;
+        font-size: 0.8rem;
+        margin-bottom: 3px;
+    }
+
+    .pii-review-value {
+        font-weight: 600;
+        font-family: ui-monospace, Consolas, monospace;
+    }
+
+    .pii-review-reason {
+        border-top: 1px solid #eef1f4;
+        padding-top: 11px;
+        font-size: 0.875rem;
+        color: #475569;
+        line-height: 1.5;
+    }
+
+    .pii-review-summary {
+        margin-top: 8px;
+        font-weight: 600;
+    }
+</style>
+
+<script>
+(function Phase73D2ReviewCards() {
+    function initialize() {
+        const headings = [...document.querySelectorAll('h1,h2,h3,h4')];
+
+        const heading = headings.find(h =>
+            h.textContent.trim().toLowerCase() === 'masked findings'
+        );
+
+        if (!heading) return;
+
+        // The existing Razor page owns the authoritative findings.
+        // This enhances presentation without changing security logic.
+        let list = heading.nextElementSibling;
+
+        while (list && !['UL', 'OL'].includes(list.tagName)) {
+            if (list.matches('form, h1, h2, h3, h4')) return;
+            list = list.nextElementSibling;
+        }
+
+        if (!list) return;
+
+        const findings = [...list.children].filter(
+            li => li.tagName === 'LI'
+        );
+
+        if (!findings.length) return;
+
+        const cards = document.createElement('div');
+        cards.className = 'pii-review-card-list';
+
+        let parsed = 0;
+
+        function element(tag, className, value) {
+            const node = document.createElement(tag);
+            node.className = className || '';
+            if (value !== undefined) node.textContent = value;
+            return node;
+        }
+
+        for (const item of findings) {
+            const text = item.textContent.trim();
+
+            // Expected existing format:
+            // Category — Confidence confidence; Page N; MASK — Reason
+            const match = text.match(
+                /^(.+?)\s+[—–-]\s+(High|Medium|Low)\s+confidence;\s*(Page\s+\d+|Page unavailable|Document[^;]*);\s*(.*?)\s+[—–-]\s+([\s\S]+)$/i
+            );
+
+            if (!match) {
+                // Keep the original list if any row differs.
+                return;
+            }
+
+            const [, category, confidence, page, masked, reason] = match;
+
+            const card = element('div', 'pii-review-card');
+            const head = element('div', 'pii-review-card-head');
+
+            head.appendChild(
+                element('span', 'pii-review-card-category', category)
+            );
+
+            const confidenceBadge = element(
+                'span',
+                'pii-review-confidence ' + confidence.toLowerCase(),
+                confidence + ' confidence'
+            );
+
+            head.appendChild(confidenceBadge);
+            card.appendChild(head);
+
+            const fields = element('div', 'pii-review-fields');
+
+            const pageField = element('div', 'pii-review-field');
+            pageField.appendChild(
+                element('span', 'pii-review-field-label', 'PDF page')
+            );
+            pageField.appendChild(
+                element('span', 'pii-review-value', page.replace(/^Page\s*/i, ''))
+            );
+
+            const maskedField = element('div', 'pii-review-field');
+            maskedField.appendChild(
+                element('span', 'pii-review-field-label', 'Masked evidence')
+            );
+            maskedField.appendChild(
+                element('span', 'pii-review-value', masked)
+            );
+
+            fields.appendChild(pageField);
+            fields.appendChild(maskedField);
+            card.appendChild(fields);
+
+            card.appendChild(
+                element('div', 'pii-review-reason', reason)
+            );
+
+            cards.appendChild(card);
+            parsed++;
+        }
+
+        const summary = element(
+            'div',
+            'pii-review-summary',
+            parsed + ' individual detection' +
+                (parsed === 1 ? '' : 's')
+        );
+
+        heading.insertAdjacentElement('afterend', summary);
+        list.replaceWith(cards);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initialize);
+    } else {
+        initialize();
+    }
+})();
+</script>

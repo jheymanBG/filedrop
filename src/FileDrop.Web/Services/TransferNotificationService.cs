@@ -12,17 +12,20 @@ public sealed class TransferNotificationService : ITransferNotificationService
     private readonly IEmailService _email;
     private readonly IAuditRepository _audit;
     private readonly IConfiguration _config;
+    private readonly IRuntimeSettings _runtimeSettings;
     private readonly ILogger<TransferNotificationService> _logger;
 
     public TransferNotificationService(
         IEmailService email,
         IAuditRepository audit,
         IConfiguration config,
+        IRuntimeSettings runtimeSettings,
         ILogger<TransferNotificationService> logger)
     {
         _email = email;
         _audit = audit;
         _config = config;
+        _runtimeSettings = runtimeSettings;
         _logger = logger;
     }
 
@@ -30,9 +33,9 @@ public sealed class TransferNotificationService : ITransferNotificationService
     {
         var remoteIp = context.Connection.RemoteIpAddress?.ToString();
 
-        var sendRecipient = _config.GetValue<bool>("Notifications:SendRecipientUploadReady", true);
-        var sendSender = _config.GetValue<bool?>("Notifications:SendSenderUploadComplete")
-            ?? _config.GetValue<bool>("Notifications:SendSenderConfirmation", true);
+        var sendRecipient = await _runtimeSettings.GetBoolAsync("Notifications.SendRecipientUploadReady", "Notifications:SendRecipientUploadReady", true);
+        var sendSender = await _runtimeSettings.GetBoolAsync("Notifications.SendSenderUploadComplete", "Notifications:SendSenderUploadComplete",
+            await _runtimeSettings.GetBoolAsync("Notifications.SendSenderConfirmation", "Notifications:SendSenderConfirmation", true));
 
         if (sendRecipient)
         {

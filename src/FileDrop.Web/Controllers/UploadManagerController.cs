@@ -34,8 +34,8 @@ public sealed class UploadManagerController : Controller
         try
         {
             await _uploadManager.SaveAsync(maximumUploadGb, maximumFilesPerTransfer, requestTimeoutMinutes);
-            await _audit.WriteAsync(null, User?.Identity?.Name, "Upload Configuration Saved", $"MaxGB={maximumUploadGb}; MaxFiles={maximumFilesPerTransfer}; TimeoutMinutes={requestTimeoutMinutes}", HttpContext.Connection.RemoteIpAddress?.ToString());
-            TempData["Message"] = "Upload configuration saved and synced. Recycle the FileDrop app pool if needed.";
+            await _audit.WriteAsync(null, User?.Identity?.Name, "Upload Settings Saved", $"MaxGB={maximumUploadGb}; MaxFiles={maximumFilesPerTransfer}; TimeoutMinutes={requestTimeoutMinutes}; LiveWebConfigModified=False", HttpContext.Connection.RemoteIpAddress?.ToString());
+            TempData["Message"] = "Upload settings saved. FileDrop did not modify the live IIS web.config.";
         }
         catch (Exception ex)
         {
@@ -65,9 +65,8 @@ public sealed class UploadManagerController : Controller
     [HttpPost("/Admin/Uploads/Repair")]
     public async Task<IActionResult> Repair()
     {
-        await _uploadManager.RepairAsync();
-        await _audit.WriteAsync(null, User?.Identity?.Name, "Upload Configuration Repaired", "Upload web.config settings repaired/resynced.", HttpContext.Connection.RemoteIpAddress?.ToString());
-        TempData["Message"] = "Upload configuration repaired.";
+        await _audit.WriteAsync(null, User?.Identity?.Name, "Legacy Upload Sync Blocked", "The retired web.config sync action was requested. No IIS configuration was modified.", HttpContext.Connection.RemoteIpAddress?.ToString());
+        TempData["Message"] = "Live IIS synchronization has been retired. FileDrop uses chunked uploads and does not modify web.config from the Admin page.";
         return RedirectToAction(nameof(Index));
     }
 

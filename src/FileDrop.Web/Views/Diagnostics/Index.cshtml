@@ -1,0 +1,22 @@
+@model FileDrop.Web.Models.SystemDiagnosticsViewModel
+@{
+    string Uptime(TimeSpan value) => $"{(int)value.TotalDays}d {value.Hours}h {value.Minutes}m";
+}
+<section class="admin-shell">
+    <partial name="_AdminNav" />
+    <div class="admin-main">
+        <div class="page-title-row"><div><h1>System Diagnostics</h1><p class="muted">Live checks and build information for support and release validation.</p></div><a class="button" href="/Admin/Diagnostics/Download">Download Support Package</a></div>
+        <div class="metric-grid">
+            <div class="metric"><span>Version</span><strong>@Model.ProductVersion</strong></div>
+            <div class="metric"><span>Commit</span><strong>@Model.CommitHash</strong></div>
+            <div class="metric"><span>Schema</span><strong>@Model.DatabaseSchemaVersion</strong></div>
+            <div class="metric"><span>Environment</span><strong>@Model.EnvironmentName</strong></div>
+            <div class="metric"><span>Server</span><strong>@Model.MachineName</strong></div>
+            <div class="metric"><span>Uptime</span><strong>@Uptime(Model.Uptime)</strong></div>
+        </div>
+        <div class="admin-card"><h2>Health Checks</h2><table class="admin-table"><thead><tr><th>Component</th><th>Status</th><th>Details</th><th>Duration</th></tr></thead><tbody>
+        @foreach (var check in Model.Checks) { <tr><td><strong>@check.Name</strong></td><td><span class="badge @(check.IsHealthy ? "active" : "danger")">@check.Status</span></td><td>@check.Details</td><td>@check.Duration.TotalMilliseconds.ToString("0") ms</td></tr> }
+        </tbody></table></div>
+        <div class="admin-card"><h2>Runtime</h2><p><strong>OS:</strong> @Model.OperatingSystem</p><p><strong>.NET:</strong> @Model.RuntimeVersion</p><p><strong>Build:</strong> @Model.BuildTimestamp</p><p><strong>Checked:</strong> @Model.CheckedAt.ToLocalTime()</p></div>
+    </div>
+</section>

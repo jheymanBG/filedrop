@@ -5,6 +5,11 @@ using Microsoft.Identity.Web.UI;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Host.UseDefaultServiceProvider(options =>
+{
+    options.ValidateScopes = true;
+    options.ValidateOnBuild = true;
+});
 
 builder.Host.UseSerilog((context, config) =>
 {
@@ -41,9 +46,12 @@ builder.Services
 builder.Services.AddRazorPages();
 
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddSingleton<IStorageService, StorageService>();
+builder.Services.AddScoped<IStorageService, StorageService>();
 builder.Services.AddSingleton<ITokenService, TokenService>();
 builder.Services.AddScoped<ITransferRepository, TransferRepository>();
+builder.Services.AddScoped<PiiReviewRepository>();
+builder.Services.AddScoped<PiiReleaseService>();
+builder.Services.AddScoped<PiiReviewNotificationService>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<ILoginFailureAlertService, LoginFailureAlertService>();
@@ -51,7 +59,11 @@ builder.Services.AddScoped<IAdminRepository, AdminRepository>();
 builder.Services.AddScoped<IAuditRepository, AuditRepository>();
 builder.Services.AddScoped<ICleanupService, CleanupService>();
 builder.Services.AddScoped<ISettingsRepository, SettingsRepository>();
+builder.Services.AddScoped<IRuntimeSettings, RuntimeSettings>();
+builder.Services.AddScoped<IStorageProtectionService, StorageProtectionService>();
+builder.Services.AddScoped<IStorageLocationService, StorageLocationService>();
 builder.Services.AddScoped<IHealthService, HealthService>();
+builder.Services.AddScoped<IDiagnosticsService, DiagnosticsService>();
 builder.Services.AddScoped<IUploadPolicyService, UploadPolicyService>();
 builder.Services.AddScoped<IAdminAccessService, AdminAccessService>();
 builder.Services.AddScoped<IAdminUserRepository, AdminUserRepository>();
@@ -65,6 +77,10 @@ builder.Services.AddScoped<IBrandingService, BrandingService>();
 builder.Services.AddScoped<IEntraReadinessService, EntraReadinessService>();
 builder.Services.AddScoped<IProductionRepository, ProductionRepository>();
 builder.Services.AddScoped<IVirusScanService, VirusScanService>();
+builder.Services.AddScoped<IPiiScanService, PiiScanService>();
+builder.Services.AddScoped<IPiiScanRepository, PiiScanRepository>();
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IPresidioPiiClient, PresidioPiiClient>();
 builder.Services.AddScoped<IFileScanRepository, FileScanRepository>();
 builder.Services.AddScoped<IEnterpriseAuthorizationService, EnterpriseAuthorizationService>();
 builder.Services.AddScoped<IEntraValidationService, EntraValidationService>();
@@ -95,20 +111,3 @@ app.MapControllerRoute(
     pattern: "{controller=Home}/{action=Index}/{id?}");
 
 app.Run();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

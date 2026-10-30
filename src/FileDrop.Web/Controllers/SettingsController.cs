@@ -27,6 +27,26 @@ public sealed class SettingsController : Controller
     [HttpGet("/Admin/Settings")]
     public async Task<IActionResult> Index()
     {
+        if (await _settings.GetValueAsync("Security.MalwareScanner.Provider") is null)
+            await _settings.UpsertAsync("Security.MalwareScanner.Provider", "AutoDetect", "Malware scanning provider: AutoDetect, MicrosoftDefender, SentinelOne, ExternalAV, or Disabled.");
+        if (await _settings.GetValueAsync("Security.MalwareScanner.UnavailableBehavior") is null)
+            await _settings.UpsertAsync("Security.MalwareScanner.UnavailableBehavior", "Block", "Action when the configured malware scanner is unavailable: Block, WarnAndAllow, or AllowAndLog.");
+
+        var configuredProvider = await _settings.GetStringAsync("Security.MalwareScanner.Provider", "AutoDetect");
+        var sentinel = VirusScanService.DetectSentinelOneHealth();
+        var defender = VirusScanService.DetectDefenderHealth();
+        ViewData["MalwareEffectiveProvider"] = VirusScanService.ResolveProviderName(configuredProvider);
+        ViewData["DefenderStatus"] = defender.Status;
+        ViewData["DefenderHealthy"] = defender.IsHealthy;
+        ViewData["DefenderDetails"] = defender.Details;
+        ViewData["SentinelOneStatus"] = sentinel.Status;
+        ViewData["SentinelOneDetails"] = sentinel.Details;
+        ViewData["SentinelOneHealthy"] = sentinel.IsHealthy;
+        ViewData["SentinelOneServiceRunning"] = sentinel.ServiceRunning;
+        ViewData["SentinelOneProcessRunning"] = sentinel.ProcessRunning;
+        ViewData["SentinelOneCliAvailable"] = sentinel.CliAvailable;
+        ViewData["SentinelOneCliHealthy"] = sentinel.CliHealthy;
+
         return View(new SettingsViewModel
         {
             Settings = await _settings.GetAllAsync(),
@@ -47,6 +67,26 @@ public sealed class SettingsController : Controller
     [HttpPost("/Admin/Settings")]
     public async Task<IActionResult> Save(string key, string? value)
     {
+        if (key.Equals("Security.PiiScanning.Mode", StringComparison.OrdinalIgnoreCase) &&
+            !new[] { "Block", "Warn" }.Contains(value ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            TempData["Message"] = "Invalid PII scanning mode.";
+            return RedirectToAction(nameof(Index));
+        }
+
+        if (key.Equals("Security.MalwareScanner.Provider", StringComparison.OrdinalIgnoreCase) &&
+            !new[] { "AutoDetect", "MicrosoftDefender", "SentinelOne", "ExternalAV", "Disabled" }.Contains(value ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            TempData["Message"] = "Invalid malware scanner provider.";
+            return RedirectToAction(nameof(Index));
+        }
+        if (key.Equals("Security.MalwareScanner.UnavailableBehavior", StringComparison.OrdinalIgnoreCase) &&
+            !new[] { "Block", "WarnAndAllow", "AllowAndLog" }.Contains(value ?? "", StringComparer.OrdinalIgnoreCase))
+        {
+            TempData["Message"] = "Invalid scanner unavailable behavior.";
+            return RedirectToAction(nameof(Index));
+        }
+
         await _settings.UpdateAsync(key, value);
         await _audit.WriteAsync(null, User?.Identity?.Name, "Setting Updated", $"{key}={value}", HttpContext.Connection.RemoteIpAddress?.ToString());
 

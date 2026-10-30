@@ -11,7 +11,6 @@ public interface IUploadManagerService
     Task<UploadManagerDashboard> GetDashboardAsync();
     Task SaveAsync(decimal maximumUploadGb, int maximumFilesPerTransfer, int requestTimeoutMinutes);
     Task SaveRetentionAsync(int retentionDays, bool automaticCleanupEnabled, int automaticCleanupHourUtc);
-    Task RepairAsync();
 }
 
 public sealed class UploadManagerService : IUploadManagerService
@@ -139,7 +138,10 @@ public sealed class UploadManagerService : IUploadManagerService
         await _settings.UpdateAsync("Upload.MaximumFilesPerTransfer", maximumFilesPerTransfer.ToString());
         await _settings.UpdateAsync("Upload.RequestTimeoutMinutes", requestTimeoutMinutes.ToString());
 
-        WriteWebConfigLimit(GetPublishWebConfigPath(), bytes, requestTimeoutMinutes);
+        // Important: FileDrop uses chunked uploads. The overall transfer limit must never be
+        // copied into IIS requestFiltering/maxAllowedContentLength, which is a UInt32
+        // per-request limit. Saving application upload settings intentionally does not
+        // modify the live production web.config.
     }
 
     public async Task SaveRetentionAsync(int retentionDays, bool automaticCleanupEnabled, int automaticCleanupHourUtc)
@@ -150,13 +152,6 @@ public sealed class UploadManagerService : IUploadManagerService
         await _settings.UpdateAsync("Retention.Days", retentionDays.ToString());
         await _settings.UpdateAsync("Retention.AutomaticCleanupEnabled", automaticCleanupEnabled ? "1" : "0");
         await _settings.UpdateAsync("Retention.AutomaticCleanupHourUtc", automaticCleanupHourUtc.ToString());
-    }
-
-    public async Task RepairAsync()
-    {
-        var bytes = await GetConfiguredBytesAsync();
-        var timeout = await _settings.GetIntAsync("Upload.RequestTimeoutMinutes", 1440);
-        WriteWebConfigLimit(GetPublishWebConfigPath(), bytes, timeout);
     }
 
     private async Task<long> GetConfiguredBytesAsync()
@@ -192,32 +187,4 @@ public sealed class UploadManagerService : IUploadManagerService
         catch { return 0; }
     }
 
-    private static void WriteWebConfigLimit(string path, long bytes, int timeoutMinutes)
-    {
-        if (!File.Exists(path)) return;
-
-        var doc = XDocument.Load(path);
-        var config = doc.Element("configuration")!;
-        var sws = config.Element("system.webServer") ?? new XElement("system.webServer");
-        if (sws.Parent is null) config.Add(sws);
-
-        var security = sws.Element("security") ?? new XElement("security");
-        if (security.Parent is null) sws.Add(security);
-
-        var filtering = security.Element("requestFiltering") ?? new XElement("requestFiltering");
-        if (filtering.Parent is null) security.Add(filtering);
-
-        var limits = filtering.Element("requestLimits") ?? new XElement("requestLimits");
-        if (limits.Parent is null) filtering.Add(limits);
-
-        limits.SetAttributeValue("maxAllowedContentLength", bytes.ToString());
-
-        var aspNetCore = sws.Element("aspNetCore");
-        if (aspNetCore is not null)
-        {
-            aspNetCore.SetAttributeValue("requestTimeout", $"{timeoutMinutes / 60:D2}:{timeoutMinutes % 60:D2}:00");
-        }
-
-        doc.Save(path);
-    }
 }

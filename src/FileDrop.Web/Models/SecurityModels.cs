@@ -1,4 +1,4 @@
-﻿namespace FileDrop.Web.Models;
+namespace FileDrop.Web.Models;
 
 public sealed class FileScanRecord
 {
@@ -27,9 +27,18 @@ public sealed class SecurityDashboardViewModel
 
 public sealed class ScanResult
 {
-    public string Engine { get; set; } = "Microsoft Defender";
+    public string Engine { get; set; } = "Unknown";
     public string Result { get; set; } = "Unknown";
     public string? ThreatName { get; set; }
     public string? Details { get; set; }
+
     public bool IsClean => Result.Equals("Clean", StringComparison.OrdinalIgnoreCase);
+    public bool IsProtected => Result.Equals("Protected", StringComparison.OrdinalIgnoreCase);
+    public bool IsThreat => Result.Equals("Infected", StringComparison.OrdinalIgnoreCase) || Result.Equals("Quarantined", StringComparison.OrdinalIgnoreCase);
+    public bool IsUnavailable => Result.Equals("Unavailable", StringComparison.OrdinalIgnoreCase) || Result.Equals("Failed", StringComparison.OrdinalIgnoreCase);
+    public bool IsDisabled => Result.Equals("Disabled", StringComparison.OrdinalIgnoreCase);
+
+    // A clean on-demand scan, active endpoint protection, or an explicitly disabled
+    // provider are all non-blocking states. Scanner failures are handled separately by policy.
+    public bool IsAcceptedProtection => IsClean || IsProtected || IsDisabled;
 }

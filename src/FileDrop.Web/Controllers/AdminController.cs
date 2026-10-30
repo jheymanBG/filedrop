@@ -12,34 +12,37 @@ public sealed class AdminController : Controller
     private readonly IConfiguration _config;
     private readonly IAuditRepository _audit;
     private readonly ICleanupService _cleanup;
+    private readonly IStorageProtectionService _storageProtection;
 
     public AdminController(
         IAdminRepository admin,
         IEmailService email,
         IConfiguration config,
         IAuditRepository audit,
-        ICleanupService cleanup)
+        ICleanupService cleanup,
+        IStorageProtectionService storageProtection)
     {
         _admin = admin;
         _email = email;
         _config = config;
         _audit = audit;
         _cleanup = cleanup;
+        _storageProtection = storageProtection;
     }
 
     [HttpGet("/Admin")]
     public async Task<IActionResult> Index()
     {
         var model = await _admin.GetDashboardAsync();
-        ApplyStorageStatus(model);
+        await ApplyStorageStatusAsync(model);
         return View(model);
     }
 
     [HttpGet("/Admin/StorageStatus")]
-    public IActionResult StorageStatus()
+    public async Task<IActionResult> StorageStatus()
     {
         var model = new AdminDashboardViewModel();
-        ApplyStorageStatus(model);
+        await ApplyStorageStatusAsync(model);
 
         return Json(new
         {
@@ -121,13 +124,32 @@ public sealed class AdminController : Controller
     }
 
     [HttpGet("/Admin/Audit")]
-    public async Task<IActionResult> Audit(string? query)
+    public async Task<IActionResult> Audit(string? query, string? action, DateTime? from, DateTime? to)
     {
         return View(new AdminAuditViewModel
         {
             Query = query,
-            Records = await _audit.SearchAsync(query)
+            Action = action,
+            From = from,
+            To = to,
+            Actions = await _audit.GetActionsAsync(),
+            Records = await _audit.SearchAsync(query, action, from, to)
         });
+    }
+
+    [HttpGet("/Admin/Audit/Export")]
+    public async Task<IActionResult> ExportAudit(string? query, string? action, DateTime? from, DateTime? to)
+    {
+        var records = await _audit.SearchAsync(query, action, from, to);
+        var csv = new System.Text.StringBuilder();
+        csv.AppendLine("Date,User,Action,Details,IP,TransferId");
+        static string Csv(string? value) => $"\"{(value ?? string.Empty).Replace("\"", "\"\"")}\"";
+        foreach (var r in records)
+        {
+            csv.AppendLine(string.Join(',', Csv(r.CreatedDate.ToString("O")), Csv(r.UserEmail), Csv(r.Action), Csv(r.Details), Csv(r.IpAddress), Csv(r.TransferId?.ToString())));
+        }
+        await _audit.WriteAsync(null, User?.Identity?.Name, "Audit Exported", $"Rows={records.Count}", HttpContext.Connection.RemoteIpAddress?.ToString());
+        return File(System.Text.Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"FileDrop-Audit-{DateTime.Now:yyyyMMdd-HHmmss}.csv");
     }
 
     [HttpPost("/Admin/CleanupExpired")]
@@ -139,11 +161,9 @@ public sealed class AdminController : Controller
         return RedirectToAction(nameof(Index));
     }
 
-    private void ApplyStorageStatus(AdminDashboardViewModel model)
+    private async Task ApplyStorageStatusAsync(AdminDashboardViewModel model)
     {
-        var storageRoot = _config["Storage:RootPath"]
-            ?? _config["Storage:FilesPath"]
-            ?? "C:\\SecureFileTransfer";
+        var storageRoot = await _storageProtection.GetActiveRootPathAsync();
 
         model.StorageRoot = storageRoot;
         model.StorageCheckedAt = DateTime.Now;
@@ -152,10 +172,7 @@ public sealed class AdminController : Controller
         {
             var fullPath = Path.GetFullPath(storageRoot);
             var root = Path.GetPathRoot(fullPath);
-            if (string.IsNullOrWhiteSpace(root))
-            {
-                return;
-            }
+            if (string.IsNullOrWhiteSpace(root)) return;
 
             var drive = new DriveInfo(root);
             model.StorageDriveName = drive.Name;
@@ -171,4 +188,5 @@ public sealed class AdminController : Controller
             model.StorageDriveName = "Unavailable";
         }
     }
+
 }

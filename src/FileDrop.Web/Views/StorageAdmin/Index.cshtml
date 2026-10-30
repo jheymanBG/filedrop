@@ -1,0 +1,163 @@
+@model FileDrop.Web.Models.StorageAdminViewModel
+@{
+    static string Bytes(long value)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB", "PB" };
+        decimal size = Math.Max(0, value);
+        var unit = 0;
+        while (size >= 1024 && unit < units.Length - 1) { size /= 1024; unit++; }
+        return $"{size:0.##} {units[unit]}";
+    }
+
+    var active = Model.ActiveLocation;
+    var minimumGb = Math.Max(1, Model.MinimumFreeSpaceBytes / 1024 / 1024 / 1024);
+    var bufferGb = Math.Max(0, Model.SafetyBufferBytes / 1024 / 1024 / 1024);
+}
+
+<section class="admin-shell">
+    @await Html.PartialAsync("_AdminNav")
+
+    <div class="admin-main storage-admin-page">
+        <div class="page-title-row">
+            <div>
+                <h1>Storage Manager</h1>
+                <p class="muted">Change where new uploads are stored without moving existing transfers. Existing files remain downloadable from their recorded paths until they expire or are deleted.</p>
+            </div>
+        </div>
+
+        @if (TempData["Message"] is not null) { <div class="notice notice-success">@TempData["Message"]</div> }
+        @if (TempData["Error"] is not null) { <div class="notice notice-error">@TempData["Error"]</div> }
+
+        <div class="storage-summary-grid">
+            <article class="admin-card storage-summary-card">
+                <span class="storage-label">Active root</span>
+                <strong>@active.RootPath</strong>
+                <span class="badge @(active.IsReadOnly ? "warning" : "active")">@(active.IsReadOnly ? "Read only" : "Accepting uploads")</span>
+            </article>
+            <article class="admin-card storage-summary-card">
+                <span class="storage-label">Available space</span>
+                <strong>@Bytes(active.FreeBytes)</strong>
+                <span>@active.FreePercent% free of @Bytes(active.TotalBytes)</span>
+            </article>
+            <article class="admin-card storage-summary-card">
+                <span class="storage-label">Microsoft Defender</span>
+                <strong>@(Model.DefenderAvailable ? "Available" : "Unavailable")</strong>
+                <span class="storage-path-detail">@Model.DefenderStatus</span>
+            </article>
+        </div>
+
+        <article class="admin-card storage-config-card">
+            <h2>Active storage location</h2>
+            <p class="muted">The selected path is used only for new upload sessions. FileDrop stores the complete physical path with every uploaded file, so old drives can remain online until their transfers expire.</p>
+
+            <form method="post" action="/Admin/Storage/Save" id="storageForm">
+                @Html.AntiForgeryToken()
+                <label for="rootPath">Storage root</label>
+                <div class="storage-path-row">
+                    <input id="rootPath" name="rootPath" value="@active.RootPath" required />
+                    <button type="button" class="secondary" id="testStorageButton">Test path</button>
+                </div>
+                <div id="storageTestResult" class="storage-test-result" aria-live="polite"></div>
+
+                <label class="inline-check storage-readonly-check">
+                    <input type="checkbox" name="readOnly" value="true" @(active.IsReadOnly ? "checked" : null) />
+                    Mark this location read-only and stop new uploads
+                </label>
+
+                <div class="storage-subpaths">
+                    <div><span>Files</span><code>@active.FilesPath</code></div>
+                    <div><span>Temporary chunks</span><code>@active.TempPath</code></div>
+                    <div><span>Quarantine</span><code>@active.QuarantinePath</code></div>
+                    <div><span>Logs</span><code>@active.LogsPath</code></div>
+                </div>
+
+                <button type="submit">Save active storage</button>
+            </form>
+        </article>
+
+        <article class="admin-card storage-config-card drive-alert-card">
+            <div class="card-title-row drive-alert-title">
+                <div>
+                    <h2>Drive warning controls</h2>
+                    <p class="muted">Choose which drives are allowed to send FileDrop low-space warning emails. The active FileDrop storage drive is enabled by default; other drives are disabled unless you turn them on.</p>
+                </div>
+            </div>
+
+            <form method="post" action="/Admin/Storage/DriveAlerts">
+                @Html.AntiForgeryToken()
+                <div class="drive-alert-grid">
+                    @foreach (var drive in Model.DriveAlerts)
+                    {
+                        <label class="drive-alert-item">
+                            <span class="drive-alert-check">
+                                <input type="checkbox" name="enabledDrives" value="@drive.DriveName" @(drive.AlertsEnabled ? "checked" : null) />
+                                <strong>@drive.DriveName</strong>
+                                @if (drive.IsActiveStorageDrive)
+                                {
+                                    <span class="badge active">Active storage</span>
+                                }
+                            </span>
+                            <span class="drive-alert-meta">
+                                @(string.IsNullOrWhiteSpace(drive.VolumeLabel) ? drive.DriveType : $"{drive.VolumeLabel} · {drive.DriveType}")
+                            </span>
+                            @if (drive.IsReady)
+                            {
+                                <span class="drive-alert-space">@Bytes(drive.FreeBytes) free · @drive.FreePercent% available</span>
+                            }
+                            else
+                            {
+                                <span class="drive-alert-space warning-text">Drive is not currently ready.</span>
+                            }
+                        </label>
+                    }
+                </div>
+                <button type="submit">Save drive warning settings</button>
+            </form>
+        </article>
+
+        <article class="admin-card storage-config-card">
+            <h2>Upload storage protection</h2>
+            <form method="post" action="/Admin/Storage/Protection">
+                @Html.AntiForgeryToken()
+                <label class="inline-check"><input type="checkbox" name="enabled" value="true" @(Model.ProtectionEnabled ? "checked" : null) /> Enable storage protection</label>
+                <div class="storage-two-column">
+                    <label>Minimum free space (GB)<input type="number" name="minimumFreeSpaceGb" min="1" max="102400" value="@minimumGb" /></label>
+                    <label>Safety buffer (GB)<input type="number" name="safetyBufferGb" min="0" max="102400" value="@bufferGb" /></label>
+                    <label>Contact department<input name="contactDepartment" value="@Model.ContactDepartment" /></label>
+                    <label>Contact email<input type="email" name="contactEmail" value="@Model.ContactEmail" /></label>
+                </div>
+                <button type="submit">Save protection settings</button>
+            </form>
+        </article>
+    </div>
+</section>
+
+<script>
+(() => {
+    const button = document.getElementById('testStorageButton');
+    const input = document.getElementById('rootPath');
+    const result = document.getElementById('storageTestResult');
+    if (!button || !input || !result) return;
+
+    button.addEventListener('click', async () => {
+        result.className = 'storage-test-result pending';
+        result.textContent = 'Testing read, write, delete, and free-space access...';
+        button.disabled = true;
+        try {
+            const response = await fetch('/Admin/Storage/Test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ rootPath: input.value })
+            });
+            const data = await response.json();
+            result.className = `storage-test-result ${data.success ? 'success' : 'failure'}`;
+            result.textContent = `${data.message} Read: ${data.canRead ? 'Yes' : 'No'}; Write: ${data.canWrite ? 'Yes' : 'No'}; Delete: ${data.canDelete ? 'Yes' : 'No'}.`;
+        } catch (error) {
+            result.className = 'storage-test-result failure';
+            result.textContent = `Storage test failed: ${error.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    });
+})();
+</script>

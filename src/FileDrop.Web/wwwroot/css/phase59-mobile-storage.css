@@ -1,0 +1,247 @@
+/* FileDrop Phase 59 - mobile home polish and per-drive storage warning controls */
+
+/* Keep the home-page City logo inside a predictable frame at every viewport. */
+.upgraded-hero .logo-box-real {
+    min-height: 210px;
+    padding: 20px;
+}
+
+.upgraded-hero .logo-box-real img {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: min(100%, 300px);
+    max-height: 165px;
+    margin: 0 auto;
+    object-fit: contain;
+}
+
+.drive-alert-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 14px 0 18px;
+}
+
+.drive-alert-item {
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: #fbfdfb;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.drive-alert-item:hover {
+    border-color: #9db8a7;
+    background: #f4faf6;
+}
+
+.drive-alert-check {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex-wrap: wrap;
+}
+
+.drive-alert-check input[type="checkbox"] {
+    width: auto !important;
+    min-width: 0 !important;
+    margin: 0;
+}
+
+.drive-alert-meta,
+.drive-alert-space {
+    color: var(--muted);
+    font-size: .88rem;
+}
+
+.warning-text {
+    color: #8a4b00;
+}
+
+@media (max-width: 760px) {
+    body {
+        overflow-x: hidden;
+    }
+
+    main {
+        width: auto;
+        max-width: none;
+        margin: 16px auto 24px;
+        padding: 0 12px;
+    }
+
+    .site-header.polished-header.compact-header {
+        min-height: 0 !important;
+        height: auto !important;
+        padding: 10px 12px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 8px !important;
+    }
+
+    .site-header .brand-wrap.polished-brand.compact-brand {
+        width: 100% !important;
+        gap: 10px !important;
+        align-items: center !important;
+        min-width: 0;
+    }
+
+    .site-header .header-logo-white.header-logo-large,
+    .site-header img.site-logo {
+        width: auto !important;
+        height: 42px !important;
+        max-height: 42px !important;
+        max-width: 125px !important;
+        flex: 0 0 auto;
+        object-fit: contain !important;
+    }
+
+    .site-header .brand-divider {
+        height: 40px !important;
+        flex: 0 0 auto;
+    }
+
+    .site-header .brand-title-block {
+        min-width: 0;
+    }
+
+    .site-header .brand-title-block .brand {
+        font-size: 1.12rem !important;
+        line-height: 1.08 !important;
+        overflow-wrap: anywhere;
+    }
+
+    .site-header .brand-title-block .subbrand {
+        margin-top: 2px !important;
+        font-size: .82rem !important;
+        line-height: 1.1 !important;
+    }
+
+    .site-header .top-nav,
+    .polished-header .top-nav {
+        width: 100%;
+        margin: 0 !important;
+        display: flex !important;
+        flex-wrap: wrap !important;
+        align-items: center !important;
+        gap: 5px 12px !important;
+        font-size: .82rem;
+    }
+
+    .site-header .top-nav a,
+    .site-header .top-nav span {
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .site-header .top-nav span {
+        width: 100%;
+        order: 20;
+        opacity: .85;
+        font-size: .75rem;
+    }
+
+    .hero,
+    .card {
+        padding: 20px;
+        border-radius: 12px;
+    }
+
+    .hero.upgraded-hero {
+        display: grid !important;
+        grid-template-columns: 1fr !important;
+        gap: 18px !important;
+        min-height: 0;
+        align-items: stretch;
+    }
+
+    .hero-copy h1 {
+        font-size: clamp(1.85rem, 9vw, 2.3rem);
+        line-height: 1.04;
+        margin-bottom: 10px;
+    }
+
+    .hero-copy p {
+        font-size: 1rem;
+        line-height: 1.45;
+        margin-bottom: 16px;
+    }
+
+    .hero-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 9px;
+    }
+
+    .hero-actions .button {
+        width: 100%;
+        box-sizing: border-box;
+        text-align: center;
+    }
+
+    .upgraded-hero .logo-placeholder {
+        width: 100%;
+    }
+
+    .upgraded-hero .logo-box-real {
+        min-height: 0 !important;
+        padding: 16px !important;
+    }
+
+    .upgraded-hero .logo-box-real img {
+        width: auto !important;
+        height: auto !important;
+        max-width: min(86vw, 230px) !important;
+        max-height: 115px !important;
+        margin: 0 auto;
+        object-fit: contain !important;
+    }
+
+    .info-card {
+        margin-top: 14px;
+    }
+
+    .steps {
+        grid-template-columns: 1fr !important;
+        gap: 10px;
+    }
+
+    .steps div {
+        padding: 14px;
+    }
+
+    .feature-grid {
+        grid-template-columns: 1fr !important;
+        margin: 14px 12px 28px !important;
+        gap: 10px;
+    }
+
+    .feature-card {
+        padding: 18px;
+    }
+
+    .site-footer {
+        width: auto;
+        max-width: none;
+        margin: 18px 12px 28px;
+        padding: 16px 0;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 10px;
+    }
+
+    .site-footer a {
+        display: inline-block;
+        margin: 0 12px 6px 0;
+    }
+
+    .drive-alert-grid {
+        grid-template-columns: 1fr;
+    }
+}

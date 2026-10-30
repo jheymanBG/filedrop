@@ -1,0 +1,221 @@
+@model FileDrop.Web.Models.PiiAdminViewModel
+@{
+    var lowThresholdText = Model.PresidioLowThreshold.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+    var mediumThresholdText = Model.PresidioMediumThreshold.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+    var highThresholdText = Model.PresidioHighThreshold.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture);
+}
+<section class="admin-shell">
+    <partial name="_AdminNav" />
+    <div class="admin-main pii-admin-page">
+        <!-- Phase73H: Keep the review queue link within the main PII content. -->
+        <div class="admin-card" style="margin-bottom:18px;">
+    <h2>Pending PII Approvals</h2>
+    <p class="muted">
+        Review PII-blocked uploads, inspect masked findings,
+        and approve or reject release requests.
+    </p>
+    <a href="/Admin/Pii/Reviews" class="btn btn-primary"
+       style="display:inline-block;background:#0f5f3f;color:white;padding:12px 18px;border-radius:6px;text-decoration:none;">
+        Open Pending PII Approvals
+    </a>
+</div>
+        <div class="page-title-row">
+            <div>
+                <h1>PII Protection</h1>
+                <p class="muted">Industry-standard PII detection with Microsoft Presidio, local FileDrop fallback, confidence-based enforcement, and redacted audit context.</p>
+            </div>
+            <span class="badge @(Model.Enabled ? "active" : "warning")">@(Model.Enabled ? "Scanning enabled" : "Scanning disabled")</span>
+        </div>
+
+        @if (TempData["Message"] is not null) { <div class="notice notice-success">@TempData["Message"]</div> }
+        @if (TempData["Error"] is not null) { <div class="notice notice-error">@TempData["Error"]</div> }
+
+        <div class="admin-card">
+            <div class="card-title-row">
+                <div>
+                    <h2>PII Provider Status</h2>
+                    <p class="muted">Auto uses Presidio when healthy and falls back according to policy.</p>
+                </div>
+                <span class="badge @(Model.PresidioHealthy ? "active" : "warning")">@(Model.PresidioHealthy ? "Presidio available" : "Presidio unavailable")</span>
+            </div>
+            <div class="metric-grid" style="margin-top:16px;">
+                <div class="metric"><span>Configured provider</span><strong style="font-size:20px;">@Model.Provider</strong></div>
+                <div class="metric"><span>Effective provider</span><strong style="font-size:20px;">@Model.EffectiveProvider</strong></div>
+                <div class="metric"><span>Presidio health</span><strong style="font-size:16px;">@(Model.PresidioHealthy ? "Healthy" : "Unavailable")</strong><small class="muted">@Model.PresidioHealthMessage</small></div>
+            </div>
+            <form method="post" action="/Admin/Pii/TestPresidio" style="margin-top:14px;display:flex;gap:10px;align-items:end;">
+                @Html.AntiForgeryToken()
+                <label style="flex:1;"><span>Presidio URL</span><input type="text" name="presidioUrl" value="@Model.PresidioUrl" /></label>
+                <button type="submit">Test Presidio Connection</button>
+            </form>
+        </div>
+
+        <form method="post" action="/Admin/Pii/Save" class="admin-card pii-settings-form">
+            @Html.AntiForgeryToken()
+
+            <div class="card-title-row"><div><h2>Provider & Policy</h2><p class="muted">Recommended: Auto + local Presidio + Built-In fallback.</p></div></div>
+
+            <div class="pii-control-grid">
+                <label class="pii-control">
+                    <span>PII scanning</span>
+                    <select name="enabled">
+                        @if (Model.Enabled) { <option value="true" selected>Enabled</option><option value="false">Disabled</option> }
+                        else { <option value="true">Enabled</option><option value="false" selected>Disabled</option> }
+                    </select>
+                    <small>Master switch for PII inspection.</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>PII provider</span>
+                    <select name="provider">
+                        @foreach (var item in new[] { ("Auto", "Auto - Presidio preferred"), ("Presidio", "Microsoft Presidio"), ("BuiltIn", "FileDrop Built-In"), ("Disabled", "Disabled") })
+                        {
+                            if (Model.Provider.Equals(item.Item1, StringComparison.OrdinalIgnoreCase)) { <option value="@item.Item1" selected>@item.Item2</option> }
+                            else { <option value="@item.Item1">@item.Item2</option> }
+                        }
+                    </select>
+                    <small>Auto uses Presidio when healthy.</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>Presidio URL</span>
+                    <input type="text" name="presidioUrl" value="@Model.PresidioUrl" />
+                    <small>Default local analyzer: http://127.0.0.1:5102</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>If Presidio is unavailable</span>
+                    <select name="presidioFallback">
+                        @foreach (var item in new[] { ("BuiltIn", "Use FileDrop Built-In"), ("Block", "Block upload"), ("AllowLog", "Allow + Log") })
+                        {
+                            if (Model.PresidioFallback.Equals(item.Item1, StringComparison.OrdinalIgnoreCase)) { <option value="@item.Item1" selected>@item.Item2</option> }
+                            else { <option value="@item.Item1">@item.Item2</option> }
+                        }
+                    </select>
+                    <small>Built-In fallback is recommended for availability.</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>PII sensitivity</span>
+                    <select name="sensitivity">
+                        @foreach (var value in new[] { "Balanced", "Strict", "Custom" })
+                        {
+                            if (Model.Sensitivity.Equals(value, StringComparison.OrdinalIgnoreCase)) { <option value="@value" selected>@value</option> }
+                            else { <option value="@value">@value</option> }
+                        }
+                    </select>
+                    <small>Controls FileDrop's enforcement behavior and built-in fallback.</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>Scanner failure</span>
+                    <select name="blockOnFailure">
+                        @if (Model.BlockOnFailure) { <option value="true" selected>Block file</option><option value="false">Allow file</option> }
+                        else { <option value="true">Block file</option><option value="false" selected>Allow file</option> }
+                    </select>
+                    <small>Controls unexpected PII inspection errors.</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>Unscannable content</span>
+                    <select name="blockUnscannable">
+                        @if (Model.BlockUnscannable) { <option value="true" selected>Block file</option><option value="false">Allow file</option> }
+                        else { <option value="true">Block file</option><option value="false" selected>Allow file</option> }
+                    </select>
+                    <small>Image-only/encrypted/unsupported content behavior.</small>
+                </label>
+
+                <label class="pii-control">
+                    <span>Email / phone detection</span>
+                    <select name="scanContactInfo">
+                        @if (Model.ScanContactInfo) { <option value="true" selected>Enabled</option><option value="false">Disabled</option> }
+                        else { <option value="true">Enabled</option><option value="false" selected>Disabled</option> }
+                    </select>
+                    <small>Usually leave disabled to avoid routine contact-information matches.</small>
+                </label>
+            </div>
+
+            <div class="admin-card" style="margin-top:16px;background:#f8fbf9;box-shadow:none;">
+                <h3 style="margin-top:0;">Presidio Confidence Thresholds</h3>
+                <p class="muted">Presidio returns a 0-1 recognition score. FileDrop maps that score to your existing Low / Medium / High policy.</p>
+                <div class="pii-control-grid">
+                    <label class="pii-control"><span>Low threshold</span><input type="number" name="presidioLowThreshold" min="0.01" max="0.98" step="0.01" value="@lowThresholdText" /><small>Default 0.35. Below this score is ignored.</small></label>
+                    <label class="pii-control"><span>Medium threshold</span><input type="number" name="presidioMediumThreshold" min="0.01" max="0.99" step="0.01" value="@mediumThresholdText" /><small>Default 0.60. Balanced = Warn + Acknowledge.</small></label>
+                    <label class="pii-control"><span>High threshold</span><input type="number" name="presidioHighThreshold" min="0.01" max="1.00" step="0.01" value="@highThresholdText" /><small>Default 0.85. High confidence is always blocked.</small></label>
+                </div>
+            </div>
+
+            <div class="admin-card" style="margin-top:16px;background:#f8fbf9;box-shadow:none;">
+                <h3 style="margin-top:0;">Confidence Behavior</h3>
+                <p class="muted">Balanced defaults: Low = Allow + Log, Medium = Warn + Acknowledge, High = Block.</p>
+                <div class="pii-control-grid">
+                    <label class="pii-control">
+                        <span>Low confidence</span>
+                        <select name="lowConfidenceAction">
+                            @foreach (var item in new[] { ("AllowLog", "Allow + Log"), ("Warn", "Warn + Acknowledge"), ("Block", "Block") })
+                            {
+                                if (Model.LowConfidenceAction.Equals(item.Item1, StringComparison.OrdinalIgnoreCase)) { <option value="@item.Item1" selected>@item.Item2</option> }
+                                else { <option value="@item.Item1">@item.Item2</option> }
+                            }
+                        </select>
+                        <small>Used when Sensitivity = Custom. Balanced uses Allow + Log.</small>
+                    </label>
+                    <label class="pii-control">
+                        <span>Medium confidence</span>
+                        <select name="mediumConfidenceAction">
+                            @foreach (var item in new[] { ("AllowLog", "Allow + Log"), ("Warn", "Warn + Acknowledge"), ("Block", "Block") })
+                            {
+                                if (Model.MediumConfidenceAction.Equals(item.Item1, StringComparison.OrdinalIgnoreCase)) { <option value="@item.Item1" selected>@item.Item2</option> }
+                                else { <option value="@item.Item1">@item.Item2</option> }
+                            }
+                        </select>
+                        <small>Used when Sensitivity = Custom. Balanced uses Warn + Acknowledge.</small>
+                    </label>
+                    <label class="pii-control"><span>High confidence</span><select disabled><option selected>Block</option></select><small>High-confidence PII cannot be bypassed.</small></label>
+                </div>
+            </div>
+
+            <h3>Detection Categories</h3>
+            <div class="pii-category-grid">
+                @foreach (var item in new[] {
+                    ("SSN","U.S. Social Security numbers"),
+                    ("CreditCard","Credit-card numbers"),
+                    ("DateOfBirth","Explicitly labeled dates of birth"),
+                    ("BankAccount","U.S. bank accounts / IBAN"),
+                    ("Passport","U.S. passport numbers"),
+                    ("DriverLicense","U.S. driver's license numbers"),
+                    ("ITIN","U.S. Individual Taxpayer IDs") })
+                {
+                    <label class="pii-category">
+                        @if (Model.EnabledCategories.Contains(item.Item1)) { <input type="checkbox" name="categories" value="@item.Item1" checked /> }
+                        else { <input type="checkbox" name="categories" value="@item.Item1" /> }
+                        <span><strong>@item.Item2</strong><small>@item.Item1</small></span>
+                    </label>
+                }
+            </div>
+
+            <h3>Inspection Limits</h3>
+            <div class="pii-control-grid">
+                <label class="pii-control"><span>Maximum extracted text</span><input type="number" name="maxExtractedCharacters" min="10000" max="10000000" step="10000" value="@Model.MaxExtractedCharacters" /><small>Characters inspected from a single file.</small></label>
+                <label class="pii-control"><span>Maximum PDF pages</span><input type="number" name="maxPdfPages" min="1" max="5000" value="@Model.MaxPdfPages" /><small>Text-layer PDF pages inspected.</small></label>
+                <label class="pii-control"><span>Maximum expanded ZIP</span><input type="number" name="maxArchiveExpandedMB" min="1" max="2048" value="@Model.MaxArchiveExpandedMB" /><small>MB of expanded archive content inspected.</small></label>
+            </div>
+
+            <div class="pii-save-row"><button type="submit">Save PII Protection Settings</button></div>
+        </form>
+
+        <div class="admin-card">
+            <div class="card-title-row"><div><h2>Recent PII Inspections</h2><p class="muted">Latest 50 inspections. Sensitive values are intentionally not stored.</p></div></div>
+            <div class="admin-table-wrap"><table class="admin-table">
+                <thead><tr><th>Date</th><th>File</th><th>Result</th><th>Findings</th><th>Categories</th><th>Policy</th></tr></thead>
+                <tbody>
+                @if (Model.RecentScans.Count == 0) { <tr><td colspan="6" class="muted">No PII scan records are available yet.</td></tr> }
+                @foreach (var scan in Model.RecentScans)
+                {
+                    <tr><td>@scan.ScannedDate.ToLocalTime()</td><td>@scan.OriginalFileName</td><td><strong>@scan.Result</strong></td><td>@scan.FindingCount</td><td>@(string.IsNullOrWhiteSpace(scan.Categories) ? "—" : scan.Categories)</td><td>@(scan.Allowed ? "Allowed" : "Blocked / acknowledgement required")</td></tr>
+                }
+                </tbody>
+            </table></div>
+        </div>
+    </div>
+</section>

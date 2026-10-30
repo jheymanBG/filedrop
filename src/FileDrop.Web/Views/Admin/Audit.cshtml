@@ -1,58 +1,24 @@
-﻿@model FileDrop.Web.Models.AdminAuditViewModel
-
+@model FileDrop.Web.Models.AdminAuditViewModel
+@{
+    var exportUrl = $"/Admin/Audit/Export?query={Uri.EscapeDataString(Model.Query ?? string.Empty)}&action={Uri.EscapeDataString(Model.Action ?? string.Empty)}&from={Model.From?.ToString("yyyy-MM-dd")}&to={Model.To?.ToString("yyyy-MM-dd")}";
+}
 <section class="admin-shell">
-    <aside class="admin-nav">
-        <h2>FileDrop Admin</h2>
-        <a href="/Admin">Dashboard</a>
-        <a href="/Admin/Transfers">Transfers</a>
-        <a class="active" href="/Admin/Audit">Audit Log</a>
-        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
-    </aside>
-
+    <partial name="_AdminNav" />
     <div class="admin-main">
-        <h1>Audit Log</h1>
-
-        <form method="get" class="search-bar">
-            <input name="query" value="@Model.Query" placeholder="Search user, action, or details" />
-            <button type="submit">Search</button>
+        <div class="page-title-row"><div><h1>Audit Log</h1><p class="muted">Search, filter, and export security and operational activity.</p></div><a class="button" href="@exportUrl">Export CSV</a></div>
+        <form method="get" class="admin-card settings-toolbar" style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:12px;align-items:end;">
+            <label>Search<input name="query" value="@Model.Query" placeholder="User, action, details, or IP" /></label>
+            <label>Action<select name="action"><option value="">All actions</option>@foreach (var item in Model.Actions)
+            {
+                if (item == Model.Action) { <option value="@item" selected>@item</option> }
+                else { <option value="@item">@item</option> }
+            }</select></label>
+            <label>From<input type="date" name="from" value="@Model.From?.ToString("yyyy-MM-dd")" /></label>
+            <label>To<input type="date" name="to" value="@Model.To?.ToString("yyyy-MM-dd")" /></label>
+            <button type="submit">Apply</button>
         </form>
-
-        <div class="admin-card">
-            <table class="admin-table">
-                <thead>
-                    <tr>
-                        <th>Date</th>
-                        <th>User</th>
-                        <th>Action</th>
-                        <th>Details</th>
-                        <th>IP</th>
-                    </tr>
-                </thead>
-                <tbody>
-                @foreach (var r in Model.Records)
-                {
-                    <tr>
-                        <td>@r.CreatedDate.ToLocalTime()</td>
-                        <td>@r.UserEmail</td>
-                        <td><strong>@r.Action</strong></td>
-                        <td>@r.Details</td>
-                        <td>@r.IpAddress</td>
-                    </tr>
-                }
-                </tbody>
-            </table>
-        </div>
+        <div class="admin-card"><table class="admin-table"><thead><tr><th>Date</th><th>User</th><th>Action</th><th>Details</th><th>IP</th></tr></thead><tbody>
+        @foreach (var r in Model.Records) { <tr><td>@r.CreatedDate.ToLocalTime()</td><td>@r.UserEmail</td><td><strong>@r.Action</strong></td><td>@r.Details</td><td>@r.IpAddress</td></tr> }
+        </tbody></table></div>
     </div>
 </section>
-
-
-
-
-
-
-
-
-
-
-
-

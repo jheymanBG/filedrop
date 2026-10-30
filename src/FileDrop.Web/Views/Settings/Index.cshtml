@@ -40,6 +40,8 @@
             "Uploads.MaxRetryAttempts",
             "Uploads.RetryDelayMilliseconds",
             "Security.EnableVirusScanning",
+            "Security.MalwareScanner.Provider",
+            "Security.MalwareScanner.UnavailableBehavior",
             "Security.QuarantineOnScanFailure",
             "Security.BlockUnscannedFiles",
             "Security.AllowOneTimeLinks",
@@ -58,6 +60,7 @@
         if (exact.Contains(key)) return true;
 
         return key.StartsWith("Alerts.", StringComparison.OrdinalIgnoreCase)
+            || key.StartsWith("Security.PiiScanning.", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("Notifications.", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("Uploads.", StringComparison.OrdinalIgnoreCase)
             || key.StartsWith("Transfers.", StringComparison.OrdinalIgnoreCase)
@@ -105,6 +108,9 @@
             || key.Equals("Security.BlockUnscannedFiles", StringComparison.OrdinalIgnoreCase)
             || key.Equals("Security.AllowOneTimeLinks", StringComparison.OrdinalIgnoreCase)
             || key.Equals("Security.DefaultOneTimeLink", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.PiiScanning.BlockOnFailure", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.PiiScanning.BlockUnscannable", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.PiiScanning.ScanContactInfo", StringComparison.OrdinalIgnoreCase)
             || key.Equals("Alerts.LowDriveSpaceEnabled", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -121,7 +127,9 @@
             || key.EndsWith("MaxParallelFiles", StringComparison.OrdinalIgnoreCase)
             || key.EndsWith("MaxParallelChunksPerFile", StringComparison.OrdinalIgnoreCase)
             || key.EndsWith("ChunkSizeMB", StringComparison.OrdinalIgnoreCase)
-            || key.EndsWith("MaxRetryAttempts", StringComparison.OrdinalIgnoreCase);
+            || key.EndsWith("MaxRetryAttempts", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.PiiScanning.MaxExtractedCharacters", StringComparison.OrdinalIgnoreCase)
+            || key.Equals("Security.PiiScanning.MaxPdfPages", StringComparison.OrdinalIgnoreCase);
     }
 
     static (int min, int max, int step, string unit, string hint) NumberRule(string key)
@@ -142,6 +150,9 @@
         if (key.Equals("Transfers.MaximumExpirationDays", StringComparison.OrdinalIgnoreCase)) return (1, 365, 1, "days", "Upper limit allowed for transfer expiration.");
         if (key.Equals("Cleanup.DeleteExpiredOlderThanDays", StringComparison.OrdinalIgnoreCase)) return (1, 3650, 1, "days", "How long expired records/files are retained before cleanup.");
         if (key.Equals("Security.DefaultMaxDownloads", StringComparison.OrdinalIgnoreCase)) return (1, 10000, 1, "downloads", "Default maximum download count when download limits are enabled.");
+        if (key.Equals("Security.PiiScanning.MaxExtractedCharacters", StringComparison.OrdinalIgnoreCase)) return (10000, 10000000, 10000, "characters", "Maximum text extracted from one file for PII inspection.");
+        if (key.Equals("Security.PiiScanning.MaxPdfPages", StringComparison.OrdinalIgnoreCase)) return (1, 5000, 1, "pages", "Maximum PDF pages inspected for PII.");
+        if (key.Equals("Security.PiiScanning.MaxArchiveExpandedMB", StringComparison.OrdinalIgnoreCase)) return (1, 2048, 1, "MB", "Maximum expanded ZIP content inspected.");
         return (0, 2147483647, 1, "", "Enter a whole number.");
     }
 
@@ -149,9 +160,21 @@
     {
         if (key.Contains("Emails", StringComparison.OrdinalIgnoreCase)
             || key.Contains("Extensions", StringComparison.OrdinalIgnoreCase)
-            || key.Contains("Bcc", StringComparison.OrdinalIgnoreCase)) return true;
+            || key.Contains("Bcc", StringComparison.OrdinalIgnoreCase)
+            || key.EndsWith("Categories", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.IsNullOrWhiteSpace(value)) return false;
         return value.Length > 70 || value.Contains(';') || value.Contains(',');
+    }
+
+    static string[] ChoiceOptions(string key)
+    {
+        if (key.Equals("Security.PiiScanning.Mode", StringComparison.OrdinalIgnoreCase))
+            return new[] { "Block", "Warn" };
+        if (key.Equals("Security.MalwareScanner.Provider", StringComparison.OrdinalIgnoreCase))
+            return new[] { "AutoDetect", "MicrosoftDefender", "SentinelOne", "ExternalAV", "Disabled" };
+        if (key.Equals("Security.MalwareScanner.UnavailableBehavior", StringComparison.OrdinalIgnoreCase))
+            return new[] { "Block", "WarnAndAllow", "AllowAndLog" };
+        return Array.Empty<string>();
     }
 
     static string FriendlyName(string key)
@@ -169,6 +192,7 @@
         <a href="/Admin/Audit">Audit Log</a>
         <a href="/Admin/Health">Health</a>
         <a class="active" href="/Admin/Settings">Settings</a>
+        <a href="/Admin/Storage">Storage Manager</a>
         <a href="/Admin/AdminUsers">Admin Users</a>
         <a href="/Admin/Uploads">Upload Manager</a>
         <a href="/Admin/Deployment">Deployment</a>
@@ -196,6 +220,38 @@
             <div class="notice">@TempData["Message"]</div>
         }
 
+        @{
+            var sentinelHealthy = (ViewData["SentinelOneHealthy"] as bool?) ?? false;
+            var sentinelStatus = ViewData["SentinelOneStatus"]?.ToString() ?? "Unknown";
+            var sentinelDetails = ViewData["SentinelOneDetails"]?.ToString() ?? "No SentinelOne status details available.";
+            var sentinelServiceRunning = (ViewData["SentinelOneServiceRunning"] as bool?) ?? false;
+            var sentinelProcessRunning = (ViewData["SentinelOneProcessRunning"] as bool?) ?? false;
+            var sentinelCliAvailable = (ViewData["SentinelOneCliAvailable"] as bool?) ?? false;
+            var sentinelCliHealthy = (ViewData["SentinelOneCliHealthy"] as bool?) ?? false;
+            var effectiveProvider = ViewData["MalwareEffectiveProvider"]?.ToString() ?? "Unknown";
+            var defenderStatus = ViewData["DefenderStatus"]?.ToString() ?? "Unknown";
+            var defenderHealthy = (ViewData["DefenderHealthy"] as bool?) ?? false;
+            var defenderDetails = ViewData["DefenderDetails"]?.ToString() ?? "No Defender status details available.";
+        }
+        <div class="admin-card compact-card">
+            <div class="card-title-row">
+                <div>
+                    <h2>Endpoint Protection Status</h2>
+                    <p class="muted" style="margin:4px 0 0;">Live local health check used by Malware Scanner Provider = AutoDetect.</p>
+                </div>
+                <span class="badge @(sentinelHealthy ? "active" : "warning")">SentinelOne: @sentinelStatus</span>
+            </div>
+            <div class="metric-grid" style="margin-top:14px;">
+                <div class="metric"><span>SentinelAgent service</span><strong style="font-size:20px;">@(sentinelServiceRunning ? "Running" : "Not verified")</strong></div>
+                <div class="metric"><span>SentinelAgent process</span><strong style="font-size:20px;">@(sentinelProcessRunning ? "Running" : "Not verified")</strong></div>
+                <div class="metric"><span>sentinelctl</span><strong style="font-size:20px;">@(sentinelCliAvailable ? (sentinelCliHealthy ? "Healthy" : "Available / restricted") : "Not found")</strong></div>
+                <div class="metric"><span>Microsoft Defender</span><strong style="font-size:20px;">@defenderStatus</strong></div>
+                <div class="metric"><span>Effective provider</span><strong style="font-size:20px;">@effectiveProvider</strong></div>
+            </div>
+            <p class="muted" style="margin:12px 0 0;"><strong>SentinelOne:</strong> @sentinelDetails</p>
+            <p class="muted" style="margin:6px 0 0;"><strong>Defender:</strong> @defenderDetails</p>
+        </div>
+
         <div class="settings-toolbar admin-card compact-card">
             <input id="settingsFilter" type="search" placeholder="Find setting..." aria-label="Find setting" />
             <span class="muted">@activeSettings.Count active setting(s)</span>
@@ -217,6 +273,7 @@
                         var isLong = IsLongValue(s.SettingValue, s.SettingKey);
                         var numberRule = NumberRule(s.SettingKey);
                         var currentBool = string.Equals(s.SettingValue, "true", StringComparison.OrdinalIgnoreCase);
+                        var choices = ChoiceOptions(s.SettingKey);
                         <form method="post" action="/Admin/Settings" class="setting-editor" data-setting-key="@s.SettingKey" data-setting-text="@((s.SettingKey + " " + FriendlyName(s.SettingKey) + " " + s.Description + " " + s.SettingValue).ToLowerInvariant())">
                             <input type="hidden" name="key" value="@s.SettingKey" />
                             <div class="setting-meta">
@@ -229,7 +286,24 @@
                                 <small>Modified @s.ModifiedDate.ToLocalTime()</small>
                             </div>
                             <div class="setting-value setting-value-wide">
-                                @if (isBool)
+                                @if (choices.Length > 0)
+                                {
+                                    <select class="setting-input-wide" name="value" aria-label="@FriendlyName(s.SettingKey)">
+                                        @foreach (var option in choices)
+                                        {
+                                            if (string.Equals(s.SettingValue, option, StringComparison.OrdinalIgnoreCase))
+                                            {
+                                                <option value="@option" selected>@option</option>
+                                            }
+                                            else
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        }
+                                    </select>
+                                    <span class="setting-hint">Choose a valid policy value.</span>
+                                }
+                                else if (isBool)
                                 {
                                     <select class="setting-input-wide" name="value" aria-label="@FriendlyName(s.SettingKey)">
                                         @if (currentBool)

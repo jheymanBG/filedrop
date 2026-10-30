@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using FileDrop.Web.Models;
 using Microsoft.Data.SqlClient;
 
@@ -121,7 +121,10 @@ public sealed class AdminRepository : IAdminRepository
                     WHEN ExpirationDate < SYSUTCDATETIME() THEN DATEADD(day, @days, SYSUTCDATETIME())
                     ELSE DATEADD(day, @days, ExpirationDate)
                 END,
-                Status = 'Active'
+                Status = CASE
+                    WHEN Status IN ('Active', 'Disabled') THEN 'Active'
+                    ELSE Status
+                END
             WHERE TransferId = @transferId
             """, new { transferId, days });
     }

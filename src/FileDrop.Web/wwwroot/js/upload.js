@@ -173,7 +173,277 @@
         if (!response.ok) throw new Error(body.error || `Request failed: ${response.status}`);
         return body;
     }
+    // Phase 53 upload preflight and pre-submit scanning
+    function displayPiiCategory(category) {
+        const value = String(category || '').trim();
+        if (!value) return 'Potential PII';
+        const map = {
+            CreditCard: 'Credit Card',
+            CREDIT_CARD: 'Credit Card',
+            SSN: 'Social Security Number',
+            US_SSN: 'Social Security Number',
+            Email: 'Email Address',
+            EMAIL_ADDRESS: 'Email Address',
+            Phone: 'Phone Number',
+            PHONE_NUMBER: 'Phone Number'
+        };
+        return map[value] || value.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+    }
 
+    function showUploadProtectionDialog(result) {
+        const contactEmail = result.contactEmail || 'gisstaff@bgohio.gov';
+        const dept = result.contactDepartment || 'GIS Department';
+        const title = result.title || 'Uploads Temporarily Unavailable';
+        const message = result.message || `The FileDrop server is not accepting uploads at this time. Please contact the ${dept}.`;
+        const securityResult = Boolean(result.malwareStatus) || Boolean(result.piiDetected);
+        const blockedFiles = (result.files || []).filter(f => !f.allowed);
+
+        let modal = document.getElementById('uploadProtectionModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'uploadProtectionModal';
+            modal.className = 'upload-protection-modal';
+            document.body.appendChild(modal);
+        }
+
+        let bodyHtml;
+        if (securityResult) {
+            const malwareStatus = String(result.malwareStatus || '').toLowerCase();
+            let malwareIcon = '✓';
+            let malwareIconClass = 'security-check-icon-ok';
+            let malwareTitle = 'Malware Protection';
+            let malwareText = 'Malware protection completed.';
+
+            if (malwareStatus === 'protected') {
+                malwareTitle = 'SentinelOne Endpoint Protection';
+                malwareText = 'SentinelOne endpoint protection is active. No FileDrop on-demand malware scan was required.';
+            } else if (malwareStatus === 'clean') {
+                malwareTitle = 'Malware Protection';
+                malwareText = 'The on-demand malware scan passed.';
+            } else if (malwareStatus === 'infected' || malwareStatus === 'quarantined') {
+                malwareIcon = '×';
+                malwareIconClass = 'security-check-icon-block';
+                malwareText = 'Malware was detected. This file cannot be uploaded.';
+            } else if (malwareStatus === 'disabled') {
+                malwareIcon = '–';
+                malwareIconClass = 'security-check-icon-neutral';
+                malwareText = 'Malware scanning is disabled by administrator policy.';
+            } else if (malwareStatus) {
+                malwareIcon = '!';
+                malwareIconClass = 'security-check-icon-warn';
+                malwareText = result.malwareMessage || 'Malware protection could not be verified.';
+            }
+
+            const malwareHtml = result.malwareStatus ? `
+                <div class="security-check-section security-check-malware">
+                    <div class="security-check-heading">
+                        <span class="security-check-icon ${malwareIconClass}" aria-hidden="true">${malwareIcon}</span>
+                        <strong>${escapeHtml(malwareTitle)}</strong>
+                    </div>
+                    <p>${escapeHtml(malwareText)}</p>
+                </div>` : '';
+
+            let piiHtml = '';
+            if (result.piiDetected) {
+                const categories = (result.piiCategories || []).map(displayPiiCategory);
+                const categoryText = categories.length ? categories.join(', ') : 'Potential PII';
+                const confidence = result.piiMaxConfidence || 'Unknown';
+                const piiBlocked = result.allowed === false;
+                const piiIntro = piiBlocked
+                    ? 'Potential PII was detected at a confidence level configured to block this transfer.'
+                    : 'Potential PII was detected and evaluated by FileDrop policy.';
+                piiHtml = `
+                    <div class="security-check-section security-check-pii">
+                        <div class="security-check-heading">
+                            <span class="security-check-icon ${piiBlocked ? 'security-check-icon-block' : 'security-check-icon-warn'}" aria-hidden="true">${piiBlocked ? '×' : '!'}</span>
+                            <strong>PII Protection</strong>
+                        </div>
+                        <p>${escapeHtml(piiIntro)}</p>
+                        <dl class="security-check-facts">
+                            <div><dt>Type</dt><dd>${escapeHtml(categoryText)}</dd></div>
+                            <div><dt>Confidence</dt><dd>${escapeHtml(confidence)}</dd></div>
+                        </dl>
+                        ${piiBlocked ? '<p><strong>This file is blocked by policy.</strong></p>' : ''}
+                    </div>`;
+            }
+
+            const fileHtml = blockedFiles.length ? `
+                <div class="security-check-file">
+                    <strong>${escapeHtml(blockedFiles[0].fileName)}</strong>
+                    <span>${result.piiDetected ? `Blocked because ${escapeHtml(result.piiMaxConfidence || 'the configured')} confidence ${escapeHtml((result.piiCategories || []).map(displayPiiCategory).join(', ') || 'PII')} information was detected.` : escapeHtml(blockedFiles[0].message || message)}</span>
+                </div>` : '';
+
+            bodyHtml = `${result.piiDetected ? "" : malwareHtml}${piiHtml}${fileHtml}`;
+        } else {
+            const details = blockedFiles.map(f => `<li><strong>${escapeHtml(f.fileName)}</strong>: ${escapeHtml(f.message)}</li>`).join('');
+            bodyHtml = `<p>${escapeHtml(message)}</p>${details ? `<ul>${details}</ul>` : ''}`;
+        }
+
+        modal.innerHTML = `
+            <div class="upload-protection-backdrop"></div>
+            <div class="upload-protection-card" role="alertdialog" aria-modal="true">
+                <h2>${escapeHtml(title)}</h2>
+                ${bodyHtml}
+                <div class="security-contact-block">
+                    <p>Please contact the <strong>${escapeHtml(dept)}</strong> for assistance.</p>
+                    <p><a href="mailto:${escapeHtml(contactEmail)}">${escapeHtml(contactEmail)}</a></p>
+                </div>
+                <div class="upload-protection-actions">
+                    ${result.piiReviewUrl ? `<a class="button" href="${escapeHtml(result.piiReviewUrl)}">Review PII Warnings</a>` : ''}
+                    <button type="button" id="uploadProtectionClose">Close</button>
+                    <a class="button" href="mailto:${escapeHtml(contactEmail)}">Email ${escapeHtml(dept)}</a>
+                </div>
+            </div>`;
+        modal.classList.add('open');
+        document.getElementById('uploadProtectionClose')?.addEventListener('click', () => modal.classList.remove('open'));
+    }
+
+    async function preflightSelectedFiles() {
+        const payload = {
+            files: selectedFiles.map(file => ({ fileName: file.name, contentType: file.type || 'application/octet-stream', totalBytes: file.size }))
+        };
+        const response = await fetchJson('/Upload/Preflight', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!response.allowed || !response.acceptingUploads) {
+            showUploadProtectionDialog(response);
+            return false;
+        }
+        return true;
+    }
+
+    function confidenceClass(confidence) {
+        const value = String(confidence || '').toLowerCase();
+        if (value === 'high') return 'pii-confidence-high';
+        if (value === 'medium') return 'pii-confidence-medium';
+        return 'pii-confidence-low';
+    }
+
+    function showPiiAcknowledgementDialog(result, file) {
+        return new Promise((resolve, reject) => {
+            let modal = document.getElementById('piiAcknowledgementModal');
+            if (!modal) {
+                modal = document.createElement('div');
+                modal.id = 'piiAcknowledgementModal';
+                modal.className = 'upload-protection-modal';
+                document.body.appendChild(modal);
+            }
+
+            const findings = Array.isArray(result.piiFindings) ? result.piiFindings : [];
+            const findingHtml = findings.length
+                ? findings.map(f => `
+                    <div class="pii-context-finding">
+                        <div class="pii-context-heading">
+                            <strong>${escapeHtml(f.category || 'Potential PII')}</strong>
+                            <span class="pii-confidence-badge ${confidenceClass(f.confidence)}">${escapeHtml(f.confidence || 'Low')} confidence</span>
+                        </div>
+                        <div class="pii-context-meta">${escapeHtml(f.location || 'Document text')} &bull; ${escapeHtml(f.redactedValue || '[redacted]')} &bull; ${escapeHtml(String(f.count || 1))} match(es)</div>
+                        <div class="pii-context-reason">${escapeHtml(f.reason || 'Pattern matched configured PII detection rules.')}</div>
+                        <div class="pii-context-excerpt">&ldquo;${escapeHtml(f.context || 'Context unavailable.')} &rdquo;</div>
+                    </div>`).join('')
+                : '<p>No redacted context was returned by the scanner.</p>';
+
+            modal.innerHTML = `
+                <div class="upload-protection-backdrop"></div>
+                <div class="upload-protection-card pii-ack-card" role="dialog" aria-modal="true" aria-labelledby="piiAckTitle">
+                    <h2 id="piiAckTitle">Potential PII detected</h2>
+                    <p><strong>${escapeHtml(file.name)}</strong></p>
+                    <p>${escapeHtml(result.message || 'Potential sensitive information was detected.')}</p>
+                    <div class="pii-context-list">${findingHtml}</div>
+                    <label class="pii-acknowledge-row">
+                        <input type="checkbox" id="piiAcknowledgeCheckbox" />
+                        <span>I acknowledge that this file may contain sensitive information and confirm that I am authorized to send it.</span>
+                    </label>
+                    <p class="pii-ack-note">Continuing records this acknowledgement, the detected categories, confidence, file, user, time, and IP address in the FileDrop audit log. Unredacted PII values are not logged.</p>
+                    <div class="upload-protection-actions">
+                    ${result.piiReviewUrl ? `<a class="button" href="${escapeHtml(result.piiReviewUrl)}">Review PII Warnings</a>` : ''}
+                        <button type="button" id="piiAckCancel">Cancel</button>
+                        <button type="button" id="piiAckContinue" disabled>Continue Upload</button>
+                    </div>
+                </div>`;
+            modal.classList.add('open');
+
+            const checkbox = document.getElementById('piiAcknowledgeCheckbox');
+            const continueButton = document.getElementById('piiAckContinue');
+            const cancelButton = document.getElementById('piiAckCancel');
+            checkbox?.addEventListener('change', () => {
+                if (continueButton) continueButton.disabled = !checkbox.checked;
+            });
+            cancelButton?.addEventListener('click', () => {
+                modal.classList.remove('open');
+                reject(new Error('Upload cancelled because the PII warning was not acknowledged.'));
+            });
+            continueButton?.addEventListener('click', () => {
+                if (!checkbox?.checked) return;
+                modal.classList.remove('open');
+                resolve(true);
+            });
+        });
+    }
+
+    async function acknowledgePiiWarning(uploadId) {
+        return await fetchJson('/Upload/AcknowledgePii', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId, accepted: true })
+        });
+    }
+
+    async function scanCompletedUpload(uploadId, file) {
+        updateRow(file, 99.8, 'Scanning', 'Security scan before submit');
+        const result = await fetchJson('/Upload/ScanCompleted', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ uploadId })
+        });
+
+        if (result.requiresAcknowledgement) {
+            await showPiiAcknowledgementDialog(result, file);
+            const accepted = await acknowledgePiiWarning(uploadId);
+            if (!accepted.allowed) throw new Error(accepted.message || 'PII acknowledgement was not accepted.');
+            updateRow(file, 99.9, 'PII warning acknowledged', `${result.piiFindingCount || 0} finding(s); acknowledgement logged`);
+            return {
+                ...result,
+                allowed: true,
+                requiresAcknowledgement: false,
+                piiStatus: 'WarningAccepted',
+                message: accepted.message || 'PII warning acknowledged and logged.'
+            };
+        }
+
+        if (!result.allowed) {
+            const piiText = result.piiDetected
+                ? ` Potential PII: ${(result.piiCategories || []).join(', ')}. Maximum confidence: ${result.piiMaxConfidence || 'High'}.`
+                : '';
+            showUploadProtectionDialog({
+                allowed: false,
+                acceptingUploads: false,
+                title: result.status || 'File Blocked',
+                message: (result.message || 'This file was blocked by the security scan.') + piiText,
+                contactEmail: 'gisstaff@bgohio.gov',
+                contactDepartment: 'GIS Department',
+                malwareStatus: result.malwareStatus,
+                malwareMessage: result.malwareMessage,
+                piiDetected: result.piiDetected,
+                piiCategories: result.piiCategories || [],
+                piiMaxConfidence: result.piiMaxConfidence,
+                piiStatus: result.piiStatus,
+                piiFindingCount: result.piiFindingCount || 0,
+                piiReviewUrl: result.piiDetected && String(result.piiStatus || "").toLowerCase() === "blocked" && (result.malwareStatus || "").toLowerCase() !== "infected" && (result.malwareStatus || "").toLowerCase() !== "quarantined" ? `/Upload/PiiReview/${encodeURIComponent(uploadId)}` : null,
+                files: [{ fileName: file.name, allowed: false, message: result.message || result.status || 'Blocked' }]
+            });
+            throw new Error(result.message || 'File blocked by security scan.');
+        }
+
+        if (result.piiDetected) {
+            updateRow(file, 99.9, 'PII scan complete', `${result.piiFindingCount || 0} finding(s): ${(result.piiCategories || []).join(', ') || 'review complete'}`);
+        } else {
+            updateRow(file, 99.9, 'Inspection passed', 'Malware and PII checks complete');
+        }
+        return result;
+    }
     async function startUpload(file) {
         return await fetchJson('/Upload/Start', {
             method: 'POST',
@@ -298,12 +568,53 @@
         const startedAt = Date.now();
         updateRow(file, 0, 'Starting', formatBytes(file.size));
         const session = await startUpload(file);
+
+        // Phase73IOriginalRecipientFix
+        // Retain the original transfer draft by upload ID.
+        // The receiving server must independently validate
+        // these values before creating a transfer.
+        try {
+            const originalTransfer = {
+                recipientEmail:
+                    document.getElementById('RecipientEmail')?.value?.trim() || '',
+                subject:
+                    document.getElementById('Subject')?.value || '',
+                message:
+                    document.getElementById('Message')?.value || '',
+                expirationDays:
+                    parseInt(document.getElementById('ExpirationDays')?.value || '7', 10),
+                maxDownloads:
+                    document.getElementById('MaxDownloads')?.value || '',
+                disableAfterFirstDownload:
+                    !!form.querySelector('input[name="DisableAfterFirstDownload"]')?.checked,
+                savedAt: Date.now()
+            };
+
+            if (originalTransfer.recipientEmail && session.uploadId) {
+                localStorage.setItem(
+                    'filedrop-pii-transfer-' + session.uploadId,
+                    JSON.stringify(originalTransfer)
+                );
+            }
+        } catch (handoffError) {
+            console.warn(
+                'Original transfer details could not be retained.',
+                handoffError
+            );
+        }
+
         const completed = new Set(session.completedChunks || []);
 
         if (session.alreadyComplete || session.status === 'Complete') {
+            const inspection = await scanCompletedUpload(session.uploadId, file);
             completedUploadIds.push(session.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
-            updateRow(file, 100, 'Already uploaded', 'Ready to send');
+            updateRow(
+                file,
+                100,
+                inspection.piiDetected ? 'Complete - PII warning' : 'Complete',
+                inspection.piiDetected ? inspection.message : 'Ready to send'
+            );
             return;
         }
 
@@ -334,9 +645,15 @@
             await Promise.all(Array.from({ length: Math.min(maxParallelChunksPerFile, session.totalChunks) }, () => worker()));
             updateRow(file, 99.5, 'Finalizing', 'Merging chunks and verifying SHA256');
             const finalStatus = await completeUpload(session);
+            const inspection = await scanCompletedUpload(finalStatus.uploadId, file);
             completedUploadIds.push(finalStatus.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
-            updateRow(file, 100, 'Complete', `${formatBytes(file.size)} uploaded`);
+            updateRow(
+                file,
+                100,
+                inspection.piiDetected ? 'Complete - PII warning' : 'Complete',
+                inspection.piiDetected ? inspection.message : `${formatBytes(file.size)} uploaded - inspection passed`
+            );
         } catch (err) {
             if (abortRequested) await cancelUpload(session);
             failRow(file, err.message || 'Upload failed');
@@ -354,6 +671,11 @@
         if (isUploading) return;
         if (selectedFiles.length === 0) {
             alert('Choose one or more files first.');
+            return;
+        }
+
+        if (!(await preflightSelectedFiles())) {
+            uploadButton.disabled = false;
             return;
         }
 
@@ -406,7 +728,6 @@
         } catch (err) {
             if (!abortRequested) {
                 showTransferError(err.message || err);
-                alert(err.message || err);
             }
             uploadButton.disabled = false;
             if (clearButton) clearButton.disabled = false;

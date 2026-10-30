@@ -19,15 +19,18 @@ public sealed class ChunkedUploadController : Controller
 
     private readonly IChunkedUploadService _chunks;
     private readonly IConfiguration _config;
+    private readonly IRuntimeSettings _runtimeSettings;
     private readonly ILogger<ChunkedUploadController> _logger;
 
     public ChunkedUploadController(
         IChunkedUploadService chunks,
         IConfiguration config,
+        IRuntimeSettings runtimeSettings,
         ILogger<ChunkedUploadController> logger)
     {
         _chunks = chunks;
         _config = config;
+        _runtimeSettings = runtimeSettings;
         _logger = logger;
     }
 
@@ -36,7 +39,7 @@ public sealed class ChunkedUploadController : Controller
     {
         try
         {
-            var blockedMessage = GetBlockedFileMessage(request.FileName);
+            var blockedMessage = await GetBlockedFileMessageAsync(request.FileName);
             if (!string.IsNullOrWhiteSpace(blockedMessage))
             {
                 _logger.LogWarning("Blocked upload attempt. FileName={FileName}; RemoteIp={RemoteIp}",
@@ -121,24 +124,23 @@ public sealed class ChunkedUploadController : Controller
         return status is null ? NotFound() : Json(status);
     }
 
-    private string? GetBlockedFileMessage(string? fileName)
+    private async Task<string?> GetBlockedFileMessageAsync(string? fileName)
     {
         if (string.IsNullOrWhiteSpace(fileName)) return "File name is required.";
 
         var extension = Path.GetExtension(fileName).ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(extension)) return null;
 
-        var blocked = GetBlockedExtensions();
+        var blocked = await GetBlockedExtensionsAsync();
         if (!blocked.Contains(extension)) return null;
 
         return $"{Path.GetFileName(fileName)} is not allowed. Files with the {extension} extension cannot be uploaded.";
     }
 
-    private HashSet<string> GetBlockedExtensions()
+    private async Task<HashSet<string>> GetBlockedExtensionsAsync()
     {
-        var configured = _config["Uploads:BlockedExtensions"]
-            ?? _config["Security:BlockedUploadExtensions"]
-            ?? string.Empty;
+        var configured = await _runtimeSettings.GetStringAsync("Uploads.BlockedExtensions", "Uploads:BlockedExtensions",
+            _config["Security:BlockedUploadExtensions"] ?? string.Empty);
 
         var configuredItems = configured
             .Split(',', ';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)

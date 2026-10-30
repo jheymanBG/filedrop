@@ -1,0 +1,21 @@
+@{
+    var path = Context.Request.Path.Value ?? "";
+    string Active(string prefix, bool exact = false) => (exact ? path.Equals(prefix, StringComparison.OrdinalIgnoreCase) : path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ? "active" : "";
+}
+<aside class="admin-nav">
+    <h2>FileDrop Admin</h2>
+    <a class="@Active("/Admin", true)" href="/Admin">Dashboard</a>
+    <a class="@Active("/Admin/Transfers")" href="/Admin/Transfers">Transfers</a>
+    <a class="@Active("/Admin/Uploads")" href="/Admin/Uploads">Upload Manager</a>
+    <a class="@Active("/Admin/Storage")" href="/Admin/Storage">Storage</a>
+    <a class="@Active("/Admin/Pii", true)" href="/Admin/Pii">PII Protection</a>
+    <a class="@Active("/Admin/Pii/Reviews")" href="/Admin/Pii/Reviews">Pending PII Approvals</a>
+    <a class="@Active("/Admin/Security")" href="/Admin/Security">Security</a>
+    <a class="@Active("/Admin/AdminUsers")" href="/Admin/AdminUsers">Admin Users</a>
+    <a class="@Active("/Admin/Reports")" href="/Admin/Reports">Reports</a>
+    <a class="@Active("/Admin/Audit")" href="/Admin/Audit">Audit Log</a>
+    <a class="@Active("/Admin/Settings")" href="/Admin/Settings">Settings</a>
+    <a class="@Active("/Admin/Diagnostics")" href="/Admin/Diagnostics">Diagnostics</a>
+    <a href="/">User Home</a>
+    <form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
+</aside>

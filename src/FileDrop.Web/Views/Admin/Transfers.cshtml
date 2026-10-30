@@ -15,12 +15,7 @@
 }
 
 <section class="admin-shell">
-    <aside class="admin-nav">
-        <h2>FileDrop Admin</h2>
-        <a href="/Admin">Dashboard</a>
-        <a class="active" href="/Admin/Transfers">Transfers</a>
-        <a href="/">User Home</a><form method="post" action="/Admin/Logout" class="admin-logout-form"><button type="submit">Admin Logout</button></form>
-    </aside>
+    <partial name="_AdminNav" />
 
     <div class="admin-main">
         <h1>Transfers</h1>

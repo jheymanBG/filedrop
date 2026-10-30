@@ -12,7 +12,12 @@ public sealed class UploadManagerViewModel
     public long EffectiveWebConfigBytes { get; set; }
     public string PublishWebConfigPath { get; set; } = "";
     public bool PublishWebConfigExists { get; set; }
-    public bool IsSynced => EffectiveWebConfigBytes == MaximumUploadBytes;
+    public bool IisRequestLimitValid => EffectiveWebConfigBytes > 0 && EffectiveWebConfigBytes <= uint.MaxValue;
+    public decimal EffectiveWebConfigGB => Math.Round(EffectiveWebConfigBytes / 1024m / 1024m / 1024m, 2);
+
+    // Kept for compatibility with older views/packages. "Synced" now means the IIS
+    // per-request limit is syntactically safe, not that it equals the overall transfer limit.
+    public bool IsSynced => IisRequestLimitValid;
 
     public UploadManagerDashboard Dashboard { get; set; } = new();
 }

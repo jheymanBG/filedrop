@@ -17,6 +17,9 @@ public sealed class TransferController : Controller
     private readonly IAuditRepository _audit;
     private readonly IVirusScanService _virusScan;
     private readonly IFileScanRepository _scanRepo;
+    private readonly IPiiScanService _piiScan;
+    private readonly IPiiScanRepository _piiScanRepo;
+    private readonly ISettingsRepository _settings;
     private readonly IChunkedUploadService _chunkedUploads;
     private readonly IUploadPolicyService _uploadPolicy;
     private readonly IDownloadNotificationService _downloadNotifications;
@@ -32,6 +35,9 @@ public sealed class TransferController : Controller
         IAuditRepository audit,
         IVirusScanService virusScan,
         IFileScanRepository scanRepo,
+        IPiiScanService piiScan,
+        IPiiScanRepository piiScanRepo,
+        ISettingsRepository settings,
         IChunkedUploadService chunkedUploads,
         IUploadPolicyService uploadPolicy,
         IDownloadNotificationService downloadNotifications,
@@ -46,12 +52,19 @@ public sealed class TransferController : Controller
         _audit = audit;
         _virusScan = virusScan;
         _scanRepo = scanRepo;
+        _piiScan = piiScan;
+        _piiScanRepo = piiScanRepo;
+        _settings = settings;
         _chunkedUploads = chunkedUploads;
         _uploadPolicy = uploadPolicy;
         _downloadNotifications = downloadNotifications;
         _transferNotifications = transferNotifications;
         _logger = logger;
     }
+
+    // Fail closed: pending, rejected, disabled, and unknown statuses never grant file access.
+    private static bool IsDownloadAllowed(TransferRecord transfer) =>
+        string.Equals(transfer.Status, "Active", StringComparison.OrdinalIgnoreCase);
 
     [Authorize]
     [HttpGet]
@@ -236,6 +249,8 @@ public sealed class TransferController : Controller
         var result = await _repo.GetByTokenAsync(id);
         if (result.transfer is null) return NotFound("Transfer not found.");
 
+        if (!IsDownloadAllowed(result.transfer)) return NotFound();
+
         ViewBag.DownloadLink = Url.Action("Download", "Transfer", new { id = result.transfer.DownloadToken }, Request.Scheme)
             ?? $"/Transfer/Download/{result.transfer.DownloadToken}";
 
@@ -248,7 +263,7 @@ public sealed class TransferController : Controller
     {
         var result = await _repo.GetByTokenAsync(id);
         if (result.transfer is null) return NotFound("Transfer not found.");
-        if (result.transfer.Status.Equals("Disabled", StringComparison.OrdinalIgnoreCase)) return BadRequest("This link has been disabled.");
+        if (!IsDownloadAllowed(result.transfer)) return NotFound();
         if (result.transfer.ExpirationDate < DateTime.UtcNow) return BadRequest("This link has expired.");
 
         return View(new DownloadViewModel { Transfer = result.transfer, Files = result.files });
@@ -260,7 +275,7 @@ public sealed class TransferController : Controller
     {
         var result = await _repo.GetByTokenAsync(token);
         if (result.transfer is null || result.transfer.ExpirationDate < DateTime.UtcNow) return NotFound();
-        if (result.transfer.Status.Equals("Disabled", StringComparison.OrdinalIgnoreCase)) return BadRequest("This link has been disabled.");
+        if (!IsDownloadAllowed(result.transfer)) return NotFound();
 
         var file = result.files.FirstOrDefault(f => f.FileId == fileId);
         if (file is null || !System.IO.File.Exists(file.StoragePath)) return NotFound();
@@ -281,7 +296,7 @@ public sealed class TransferController : Controller
     {
         var result = await _repo.GetByTokenAsync(token);
         if (result.transfer is null || result.transfer.ExpirationDate < DateTime.UtcNow) return NotFound();
-        if (result.transfer.Status.Equals("Disabled", StringComparison.OrdinalIgnoreCase)) return BadRequest("This link has been disabled.");
+        if (!IsDownloadAllowed(result.transfer)) return NotFound();
 
         var safeSubject = string.IsNullOrWhiteSpace(result.transfer.Subject)
             ? "FileDrop"
@@ -352,6 +367,8 @@ public sealed class TransferController : Controller
                 throw new InvalidOperationException($"{completed.OriginalFileName} completed upload session is missing from storage.");
             }
 
+            await EnforcePiiPolicyAsync(completed.UploadId, completed.OriginalFileName, acceptedPath, cancellationToken);
+
             var scanBlocked = await ScanAndRecordAsync(
                 transfer.TransferId,
                 fileId,
@@ -384,6 +401,8 @@ public sealed class TransferController : Controller
             var saved = await _storage.SaveFileAsync(file, transfer.TransferId, cancellationToken);
             var fileId = Guid.NewGuid();
             var originalName = Path.GetFileName(file.FileName);
+
+            await EnforceDirectFilePiiPolicyAsync(originalName, saved.storagePath, cancellationToken);
 
             var scanBlocked = await ScanAndRecordAsync(
                 transfer.TransferId,
@@ -426,7 +445,8 @@ public sealed class TransferController : Controller
         var downloadLink = Url.Action("Download", "Transfer", new { id = transfer.DownloadToken }, Request.Scheme)
             ?? $"/Transfer/Download/{transfer.DownloadToken}";
 
-        await _transferNotifications.NotifyUploadCompleteAsync(transfer, savedFiles, downloadLink, HttpContext);
+        if (IsDownloadAllowed(transfer))
+            await _transferNotifications.NotifyUploadCompleteAsync(transfer, savedFiles, downloadLink, HttpContext);
 
         await _audit.WriteAsync(
             transfer.TransferId,
@@ -439,6 +459,45 @@ public sealed class TransferController : Controller
             transfer.TransferId, recipientEmail, senderEmail, savedFiles.Count);
 
         return (transfer, savedFiles, downloadLink);
+    }
+
+    private async Task EnforcePiiPolicyAsync(Guid uploadId, string originalFileName, string storagePath, CancellationToken cancellationToken)
+    {
+        var enabled = await _settings.GetBoolAsync("Security.PiiScanning.Enabled", true);
+        if (!enabled) return;
+
+        var existing = await _piiScanRepo.GetLatestAsync(uploadId);
+        if (existing is not null)
+        {
+            if (!existing.Allowed)
+            {
+                await _chunkedUploads.BlockAsync(uploadId, "PII policy blocked transfer creation.", cancellationToken);
+                throw new InvalidOperationException($"{originalFileName} was blocked because the PII inspection did not pass.");
+            }
+            return;
+        }
+
+        var result = await _piiScan.ScanAsync(storagePath, originalFileName, cancellationToken);
+        await _piiScanRepo.SaveAsync(uploadId, originalFileName, result);
+        if (!result.Allowed)
+        {
+            await _chunkedUploads.BlockAsync(uploadId, "PII policy blocked transfer creation.", cancellationToken);
+            await _audit.WriteAsync(null, User?.Identity?.Name, "PII Inspection Blocked Transfer", $"UploadId={uploadId}; File={originalFileName}; Result={result.Result}; Findings={result.FindingCount}; Categories={result.Categories}", HttpContext.Connection.RemoteIpAddress?.ToString());
+            throw new InvalidOperationException($"{originalFileName} was blocked because potential PII was detected or the PII inspection failed.");
+        }
+    }
+
+    private async Task EnforceDirectFilePiiPolicyAsync(string originalFileName, string storagePath, CancellationToken cancellationToken)
+    {
+        var enabled = await _settings.GetBoolAsync("Security.PiiScanning.Enabled", true);
+        if (!enabled) return;
+
+        var result = await _piiScan.ScanAsync(storagePath, originalFileName, cancellationToken);
+        if (result.Allowed) return;
+
+        try { System.IO.File.Delete(storagePath); } catch { }
+        await _audit.WriteAsync(null, User?.Identity?.Name, "PII Inspection Blocked Direct Upload", $"File={originalFileName}; Result={result.Result}; Findings={result.FindingCount}; Categories={result.Categories}", HttpContext.Connection.RemoteIpAddress?.ToString());
+        throw new InvalidOperationException($"{originalFileName} was blocked because potential PII was detected or the PII inspection failed.");
     }
 
     private void ValidateTransferInputs(string recipientEmail, int expirationDays, int? maxDownloads, int fileCount)
@@ -495,20 +554,24 @@ public sealed class TransferController : Controller
 
     private async Task<(bool blocked, string result)> ScanAndRecordAsync(Guid transferId, Guid fileId, string originalName, string storagePath, string? sha256, CancellationToken cancellationToken)
     {
-        var enableScanning = (_config["Security:EnableVirusScanning"] ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+        var enableScanning = await _settings.GetBoolAsync("Security.EnableVirusScanning", true);
         if (!enableScanning) return (false, "Skipped");
 
-        var quarantineOnFailure = (_config["Security:QuarantineOnScanFailure"] ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
-        var blockUnscanned = (_config["Security:BlockUnscannedFiles"] ?? "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+        var quarantineOnFailure = await _settings.GetBoolAsync("Security.QuarantineOnScanFailure", true);
+        var blockUnscanned = await _settings.GetBoolAsync("Security.BlockUnscannedFiles", true);
 
         var scan = await _virusScan.ScanAsync(storagePath, cancellationToken);
         var scanStoragePath = storagePath;
+        var unavailableBehavior = await _settings.GetStringAsync("Security.MalwareScanner.UnavailableBehavior", blockUnscanned ? "Block" : "AllowAndLog");
+        var threatDetected = scan.IsThreat;
 
-        if (!scan.IsClean && quarantineOnFailure)
+        // Quarantine actual malware. Scanner/provider failures remain scanner failures so they can
+        // follow the configured unavailable behavior instead of being mislabeled as malware.
+        if (threatDetected && quarantineOnFailure)
         {
             var quarantinePath = await _virusScan.QuarantineAsync(storagePath, originalName, transferId, cancellationToken);
             scanStoragePath = quarantinePath ?? storagePath;
-            scan.Result = scan.Result.Equals("Infected", StringComparison.OrdinalIgnoreCase) ? "Infected" : "Quarantined";
+            scan.Result = "Quarantined";
         }
 
         await _scanRepo.AddAsync(new FileScanRecord
@@ -524,7 +587,8 @@ public sealed class TransferController : Controller
             Details = scan.Details
         });
 
-        var blocked = !scan.IsClean && (blockUnscanned || scan.Result.Equals("Infected", StringComparison.OrdinalIgnoreCase) || scan.Result.Equals("Quarantined", StringComparison.OrdinalIgnoreCase));
+        var isThreat = scan.IsThreat;
+        var blocked = isThreat || (scan.IsUnavailable && unavailableBehavior.Equals("Block", StringComparison.OrdinalIgnoreCase));
         return (blocked, scan.Result);
     }
 

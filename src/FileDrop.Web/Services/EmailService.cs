@@ -1,4 +1,4 @@
-﻿using System.Net;
+using System.Net;
 using System.Net.Mail;
 using System.Net.Mime;
 using System.Text;
@@ -17,11 +17,13 @@ public interface IEmailService
 public sealed class EmailService : IEmailService
 {
     private readonly IConfiguration _config;
+    private readonly IRuntimeSettings _runtimeSettings;
     private readonly ILogger<EmailService> _logger;
 
-    public EmailService(IConfiguration config, ILogger<EmailService> logger)
+    public EmailService(IConfiguration config, IRuntimeSettings runtimeSettings, ILogger<EmailService> logger)
     {
         _config = config;
+        _runtimeSettings = runtimeSettings;
         _logger = logger;
     }
 
@@ -39,7 +41,7 @@ public sealed class EmailService : IEmailService
             await SendSenderUploadCompleteAsync(transfer, files, downloadLink);
 
             _logger.LogInformation("Transfer email sent. To={Recipient}; BCC={Bcc}; TransferId={TransferId}; Files={FileCount}",
-                transfer.RecipientEmail, _config["Notifications:AlwaysBcc"], transfer.TransferId, files.Count);
+                transfer.RecipientEmail, await _runtimeSettings.GetStringAsync("Notifications.AlwaysBcc", "Notifications:AlwaysBcc", string.Empty), transfer.TransferId, files.Count);
         }
         catch (Exception ex)
         {
@@ -49,7 +51,7 @@ public sealed class EmailService : IEmailService
 
     public async Task SendDownloadNotificationAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadedItem, string? ipAddress)
     {
-        var enabled = _config.GetValue<bool>("Notifications:SendDownloadNotification", true);
+        var enabled = await _runtimeSettings.GetBoolAsync("Notifications.SendDownloadNotification", "Notifications:SendDownloadNotification", true);
         if (!enabled)
         {
             return;
@@ -68,10 +70,14 @@ public sealed class EmailService : IEmailService
             using var message = CreateMessage();
             message.To.Add(transfer.SenderEmail);
 
-            var bcc = _config["Notifications:DownloadNotifyAlwaysBcc"] ?? _config["Notifications:AlwaysBcc"];
+            var bcc = await _runtimeSettings.GetStringAsync("Notifications.DownloadNotifyAlwaysBcc", "Notifications:DownloadNotifyAlwaysBcc",
+                await _runtimeSettings.GetStringAsync("Notifications.AlwaysBcc", "Notifications:AlwaysBcc", string.Empty));
             if (!string.IsNullOrWhiteSpace(bcc))
             {
-                message.Bcc.Add(bcc);
+                foreach (var address in bcc.Split(',', ';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    message.Bcc.Add(address);
+                }
             }
 
             message.Subject = "FileDrop download notification";
@@ -99,7 +105,7 @@ public sealed class EmailService : IEmailService
 
         using var message = CreateMessage();
         message.To.Add(transfer.RecipientEmail);
-        AddBcc(message);
+        await AddBccAsync(message);
         message.Subject = subject;
         AddBodies(message, BuildRecipientText(transfer, files, downloadLink), BuildRecipientHtml(transfer, files, downloadLink));
         await SendAsync(message);
@@ -107,8 +113,8 @@ public sealed class EmailService : IEmailService
 
     public async Task SendSenderUploadCompleteAsync(TransferRecord transfer, IReadOnlyList<TransferFileRecord> files, string downloadLink)
     {
-        var enabled = _config.GetValue<bool?>("Notifications:SendSenderUploadComplete")
-            ?? _config.GetValue<bool>("Notifications:SendSenderConfirmation", true);
+        var enabled = await _runtimeSettings.GetBoolAsync("Notifications.SendSenderUploadComplete", "Notifications:SendSenderUploadComplete",
+            await _runtimeSettings.GetBoolAsync("Notifications.SendSenderConfirmation", "Notifications:SendSenderConfirmation", true));
 
         if (!enabled)
         {
@@ -135,12 +141,15 @@ public sealed class EmailService : IEmailService
         return new MailMessage { From = new MailAddress(fromEmail, fromName, Encoding.UTF8) };
     }
 
-    private void AddBcc(MailMessage message)
+    private async Task AddBccAsync(MailMessage message)
     {
-        var bcc = _config["Notifications:AlwaysBcc"];
+        var bcc = await _runtimeSettings.GetStringAsync("Notifications.AlwaysBcc", "Notifications:AlwaysBcc", string.Empty);
         if (!string.IsNullOrWhiteSpace(bcc))
         {
-            message.Bcc.Add(bcc);
+            foreach (var address in bcc.Split(',', ';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                message.Bcc.Add(address);
+            }
         }
     }
 

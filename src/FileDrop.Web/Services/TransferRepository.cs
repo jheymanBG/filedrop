@@ -1,4 +1,4 @@
-﻿using Dapper;
+using Dapper;
 using FileDrop.Web.Models;
 using Microsoft.Data.SqlClient;
 
@@ -80,7 +80,7 @@ public sealed class TransferRepository : ITransferRepository
                     WHEN MaxDownloads IS NOT NULL AND DownloadCount + 1 >= MaxDownloads THEN 'Disabled'
                     ELSE Status
                 END
-            WHERE TransferId = @transferId
+            WHERE TransferId = @transferId AND Status = 'Active'
             """, new { transferId });
     }
 }

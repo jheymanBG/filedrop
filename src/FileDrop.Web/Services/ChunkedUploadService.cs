@@ -16,6 +16,8 @@ public interface IChunkedUploadService
     Task<List<ActiveChunkedUploadSummary>> GetActiveAsync(HttpContext context);
     Task<ChunkedUploadStatus> CancelAsync(HttpContext context, Guid uploadId);
     Task<List<ChunkedUploadedFile>> GetCompletedAsync(IEnumerable<Guid> uploadIds);
+    Task BlockAsync(Guid uploadId, string reason, CancellationToken cancellationToken);
+    Task HoldForPiiReviewAsync(Guid uploadId, CancellationToken cancellationToken);
     Task<int> CleanupAbandonedAsync(TimeSpan olderThan, CancellationToken cancellationToken);
 }
 
@@ -43,6 +45,26 @@ public sealed class ChunkedUploadService : IChunkedUploadService
     {
         if (string.IsNullOrWhiteSpace(request.FileName)) throw new InvalidOperationException("File name is required.");
         if (request.TotalBytes <= 0) throw new InvalidOperationException("File size is required.");
+
+        // Phase 53 storage protection server-side
+        var protectionEnabledText = await _settings.GetValueAsync("Storage.Protection.Enabled");
+        var protectionEnabled = !bool.TryParse(protectionEnabledText, out var protectionParsed) || protectionParsed;
+        if (protectionEnabled)
+        {
+            var rootPathSetting = await _settings.GetValueAsync("Storage.RootPath");
+            var rootPath = string.IsNullOrWhiteSpace(rootPathSetting) ? (_config["Storage:RootPath"] ?? @"C:\SecureFileTransfer") : rootPathSetting;
+            var safetyText = await _settings.GetValueAsync("Storage.SafetyBufferBytes");
+            var minimumText = await _settings.GetValueAsync("Storage.MinimumFreeSpaceBytes");
+            var safetyBytes = long.TryParse(safetyText, out var parsedSafety) ? parsedSafety : 10737418240L;
+            var minimumBytes = long.TryParse(minimumText, out var parsedMinimum) ? parsedMinimum : 10737418240L;
+            var fullRoot = Path.GetFullPath(rootPath);
+            var drive = new DriveInfo(Path.GetPathRoot(fullRoot)!);
+            var required = request.TotalBytes + safetyBytes + minimumBytes;
+            if (drive.AvailableFreeSpace < required)
+            {
+                throw new InvalidOperationException("The server is not accepting uploads at this time. Please contact the GIS Department at gisstaff@bgohio.gov.");
+            }
+        }
 
         var maxBytesText = await _settings.GetValueAsync("Upload.MaximumUploadBytes");
         var maxBytes = long.TryParse(maxBytesText, out var parsedMax) ? parsedMax : 107374182400L;
@@ -92,7 +114,11 @@ public sealed class ChunkedUploadService : IChunkedUploadService
         }
 
         var uploadId = Guid.NewGuid();
-        var tempRoot = _config["Storage:TempPath"] ?? Path.Combine(_config["Storage:RootPath"] ?? "C:\\SecureFileTransfer", "Temp");
+        var tempRootSetting = await _settings.GetValueAsync("Storage.TempPath");
+        var rootPathSetting2 = await _settings.GetValueAsync("Storage.RootPath");
+        var tempRoot = string.IsNullOrWhiteSpace(tempRootSetting)
+            ? (_config["Storage:TempPath"] ?? Path.Combine(string.IsNullOrWhiteSpace(rootPathSetting2) ? (_config["Storage:RootPath"] ?? @"C:\SecureFileTransfer") : rootPathSetting2, "Temp"))
+            : tempRootSetting;
         var tempFolder = Path.Combine(tempRoot, uploadId.ToString("N"));
         Directory.CreateDirectory(tempFolder);
 
@@ -252,7 +278,8 @@ public sealed class ChunkedUploadService : IChunkedUploadService
 
         await db.ExecuteAsync("UPDATE dbo.ChunkedUploadSessions SET Status = 'Finalizing', LastActivityDate = SYSUTCDATETIME() WHERE UploadId = @uploadId", new { uploadId });
 
-        var storageRoot = _config["Storage:RootPath"] ?? "C:\\SecureFileTransfer";
+        var storageRootSetting = await _settings.GetValueAsync("Storage.RootPath");
+            var storageRoot = string.IsNullOrWhiteSpace(storageRootSetting) ? (_config["Storage:RootPath"] ?? @"C:\SecureFileTransfer") : storageRootSetting;
         var dateFolder = Path.Combine(storageRoot, DateTime.Now.ToString("yyyy"), DateTime.Now.ToString("MM"), DateTime.Now.ToString("dd"));
         var safeName = Path.GetFileName(session.OriginalFileName);
         var storedName = $"{Guid.NewGuid():N}-{safeName}";
@@ -373,6 +400,46 @@ public sealed class ChunkedUploadService : IChunkedUploadService
 
         TryDeleteDirectory(session.TempFolder);
         return await GetStatusAsync(uploadId) ?? throw new InvalidOperationException("Could not read upload status.");
+    }
+
+    // Keep the file only for controlled GIS review. No download token or active transfer is created.
+    // Review hold storage must be secured by NTFS ACLs; this is a source-only development stage.
+    public async Task HoldForPiiReviewAsync(Guid uploadId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var db = new SqlConnection(_connectionString);
+        var changed = await db.ExecuteAsync("""
+            UPDATE dbo.ChunkedUploadSessions
+            SET Status = 'PendingPIIReview', LastActivityDate = SYSUTCDATETIME()
+            WHERE UploadId = @uploadId AND Status = 'Complete' AND FinalStoragePath IS NOT NULL
+            """, new { uploadId });
+        if (changed != 1) throw new InvalidOperationException("Unable to hold upload for PII review.");
+        _logger.LogInformation("Upload held for PII review. UploadId={UploadId}", uploadId);
+    }
+
+    public async Task BlockAsync(Guid uploadId, string reason, CancellationToken cancellationToken)
+    {
+        await using var db = new SqlConnection(_connectionString);
+        var row = await db.QuerySingleOrDefaultAsync<ChunkedUploadStatusRow>(
+            "SELECT * FROM dbo.ChunkedUploadSessions WHERE UploadId = @uploadId",
+            new { uploadId });
+
+        if (row is null) return;
+
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!string.IsNullOrWhiteSpace(row.FinalStoragePath))
+        {
+            TryDelete(row.FinalStoragePath);
+        }
+        TryDeleteDirectory(row.TempFolder);
+
+        await db.ExecuteAsync("""
+            UPDATE dbo.ChunkedUploadSessions
+            SET Status = 'Blocked', LastActivityDate = SYSUTCDATETIME()
+            WHERE UploadId = @uploadId
+            """, new { uploadId });
+
+        _logger.LogWarning("Upload blocked by inspection policy. UploadId={UploadId}; Reason={Reason}", uploadId, reason);
     }
 
     public async Task<List<ChunkedUploadedFile>> GetCompletedAsync(IEnumerable<Guid> uploadIds)
