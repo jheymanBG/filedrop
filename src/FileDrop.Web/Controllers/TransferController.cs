@@ -300,7 +300,7 @@ public sealed class TransferController : Controller
                 await output.FlushAsync(context.HttpContext.RequestAborted);
                 context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
             }
-            catch (Exception ex) when (ex is IOException || ex is OperationCanceledException)
+            catch (Exception ex)
             {
                 await RecordDownloadInterruptedAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
                     file.OriginalFileName, remoteIp, ex);
@@ -355,7 +355,7 @@ public sealed class TransferController : Controller
                 await output.FlushAsync(context.HttpContext.RequestAborted);
                 context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
             }
-            catch (Exception ex) when (ex is IOException || ex is OperationCanceledException)
+            catch (Exception ex)
             {
                 await RecordDownloadInterruptedAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
                     detail, remoteIp, ex);
@@ -407,11 +407,20 @@ public sealed class TransferController : Controller
         try
         {
             await _email.SendDownloadNotificationAsync(transfer, files, detail, remoteIp);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send FileDrop download email. TransferId={TransferId}",
+                transfer.TransferId);
+        }
+
+        try
+        {
             await _downloadNotifications.NotifySenderAsync(transfer.TransferId, detail, httpContext);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to send completed FileDrop download notification. TransferId={TransferId}",
+            _logger.LogError(ex, "Failed to send FileDrop sender notification. TransferId={TransferId}",
                 transfer.TransferId);
         }
     }
