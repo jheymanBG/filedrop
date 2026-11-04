@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using FileDrop.Web.Models;
 using FileDrop.Web.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -280,14 +281,38 @@ public sealed class TransferController : Controller
         var file = result.files.FirstOrDefault(f => f.FileId == fileId);
         if (file is null || !System.IO.File.Exists(file.StoragePath)) return NotFound();
 
-        await _repo.MarkDownloadedAsync(result.transfer.TransferId);
         var remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+        await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
+            "Download Started", file.OriginalFileName, remoteIp);
 
-        await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail, "File Downloaded", file.OriginalFileName, remoteIp);
-        await _email.SendDownloadNotificationAsync(result.transfer, result.files, file.OriginalFileName, remoteIp);
-        await _downloadNotifications.NotifySenderAsync(result.transfer.TransferId, file.OriginalFileName, HttpContext);
+        // Stream under the request cancellation token. Do not report completion until
+        // copying and flushing the response have succeeded.
+        return new FileCallbackResult(file.ContentType ?? "application/octet-stream", async (output, context) =>
+        {
+            try
+            {
+                await using (var input = new FileStream(file.StoragePath, FileMode.Open, FileAccess.Read,
+                    FileShare.Read, 81920, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                {
+                    context.HttpContext.Response.ContentLength = input.Length;
+                    await input.CopyToAsync(output, 81920, context.HttpContext.RequestAborted);
+                }
+                await output.FlushAsync(context.HttpContext.RequestAborted);
+                context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
+            }
+            catch (Exception ex) when (ex is IOException || ex is OperationCanceledException)
+            {
+                await RecordDownloadInterruptedAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
+                    file.OriginalFileName, remoteIp, ex);
+                throw;
+            }
 
-        return PhysicalFile(file.StoragePath, file.ContentType ?? "application/octet-stream", file.OriginalFileName);
+            await RecordDownloadCompletedAsync(result.transfer, result.files, file.OriginalFileName, remoteIp,
+                context.HttpContext);
+        })
+        {
+            FileDownloadName = file.OriginalFileName
+        };
     }
 
     [AllowAnonymous]
@@ -303,29 +328,92 @@ public sealed class TransferController : Controller
             : string.Concat(result.transfer.Subject.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
 
         var zipName = $"{safeSubject}-{DateTime.Now:yyyyMMdd-HHmm}.zip";
+        var detail = $"Download All ZIP: {zipName}";
         var remoteIp = HttpContext.Connection.RemoteIpAddress?.ToString();
 
-        await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail, "Download All ZIP", $"Files={result.files.Count}; Zip={zipName}", remoteIp);
-        await _repo.MarkDownloadedAsync(result.transfer.TransferId);
-        await _email.SendDownloadNotificationAsync(result.transfer, result.files, $"Download All ZIP: {zipName}", remoteIp);
-        await _downloadNotifications.NotifySenderAsync(result.transfer.TransferId, $"Download All ZIP: {zipName}", HttpContext);
+        await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
+            "Download Started", detail, remoteIp);
 
-        return new FileCallbackResult("application/zip", async (output, _) =>
+        return new FileCallbackResult("application/zip", async (output, context) =>
         {
-            using var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true);
-            foreach (var file in result.files)
+            try
             {
-                if (!System.IO.File.Exists(file.StoragePath)) continue;
-                var entryName = MakeUniqueName(archive, file.OriginalFileName);
-                var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
-                await using var entryStream = entry.Open();
-                await using var input = System.IO.File.OpenRead(file.StoragePath);
-                await input.CopyToAsync(entryStream);
+                using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+                {
+                    foreach (var file in result.files)
+                    {
+                        context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
+                        if (!System.IO.File.Exists(file.StoragePath)) continue;
+
+                        var entryName = MakeUniqueName(archive, file.OriginalFileName);
+                        var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
+                        await using var entryStream = entry.Open();
+                        await using var input = System.IO.File.OpenRead(file.StoragePath);
+                        await input.CopyToAsync(entryStream, 81920, context.HttpContext.RequestAborted);
+                    }
+                }
+                await output.FlushAsync(context.HttpContext.RequestAborted);
+                context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
             }
+            catch (Exception ex) when (ex is IOException || ex is OperationCanceledException)
+            {
+                await RecordDownloadInterruptedAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
+                    detail, remoteIp, ex);
+                throw;
+            }
+
+            await RecordDownloadCompletedAsync(result.transfer, result.files, detail, remoteIp,
+                context.HttpContext);
         })
         {
             FileDownloadName = zipName
         };
+    }
+
+    private async Task RecordDownloadInterruptedAsync(Guid transferId, string recipientEmail,
+        string detail, string? remoteIp, Exception exception)
+    {
+        _logger.LogWarning(exception, "FileDrop download interrupted. TransferId={TransferId}; File={File}",
+            transferId, detail);
+        try
+        {
+            await _audit.WriteAsync(transferId, recipientEmail, "Download Interrupted",
+                $"{detail}; Reason={exception.GetType().Name}", remoteIp);
+        }
+        catch (Exception auditError)
+        {
+            _logger.LogError(auditError, "Unable to audit interrupted FileDrop download. TransferId={TransferId}",
+                transferId);
+        }
+    }
+
+    private async Task RecordDownloadCompletedAsync(TransferRecord transfer,
+        List<TransferFileRecord> files, string detail, string? remoteIp, HttpContext httpContext)
+    {
+        // A completed server-side copy is not proof the recipient saved or opened the file.
+        // Completion notifications are best-effort and must not change a finished response.
+        try
+        {
+            await _repo.MarkDownloadedAsync(transfer.TransferId);
+            await _audit.WriteAsync(transfer.TransferId, transfer.RecipientEmail,
+                "Download Completed", detail, remoteIp);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to record completed FileDrop download. TransferId={TransferId}",
+                transfer.TransferId);
+        }
+
+        try
+        {
+            await _email.SendDownloadNotificationAsync(transfer, files, detail, remoteIp);
+            await _downloadNotifications.NotifySenderAsync(transfer.TransferId, detail, httpContext);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send completed FileDrop download notification. TransferId={TransferId}",
+                transfer.TransferId);
+        }
     }
 
     private async Task<(TransferRecord transfer, List<TransferFileRecord> files, string downloadLink)> CreateTransferAsync(
