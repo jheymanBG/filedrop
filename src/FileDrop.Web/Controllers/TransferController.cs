@@ -323,6 +323,10 @@ public sealed class TransferController : Controller
         if (result.transfer is null || result.transfer.ExpirationDate < DateTime.UtcNow) return NotFound();
         if (!IsDownloadAllowed(result.transfer)) return NotFound();
 
+        // Do not silently deliver an incomplete archive if a stored file has gone missing.
+        if (result.files.Count == 0 || result.files.Any(file => !System.IO.File.Exists(file.StoragePath)))
+            return NotFound();
+
         var safeSubject = string.IsNullOrWhiteSpace(result.transfer.Subject)
             ? "FileDrop"
             : string.Concat(result.transfer.Subject.Where(c => !Path.GetInvalidFileNameChars().Contains(c)));
@@ -334,24 +338,78 @@ public sealed class TransferController : Controller
         await _audit.WriteAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
             "Download Started", detail, remoteIp);
 
-        return new FileCallbackResult("application/zip", async (output, context) =>
+        // ZipArchive.Dispose writes the ZIP central directory synchronously.
+        // Writing directly to Kestrel's response stream can throw InvalidOperationException
+        // because synchronous response I/O is disabled. Finish the archive in a temporary
+        // file before asynchronously streaming it to the recipient.
+        string? tempZipPath = null;
+        try
         {
-            try
+            tempZipPath = Path.GetTempFileName();
+            await using (var zipFile = new FileStream(tempZipPath, FileMode.Create,
+                FileAccess.Write, FileShare.None, 81920, FileOptions.Asynchronous))
             {
-                using (var archive = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
+                using (var archive = new ZipArchive(zipFile, ZipArchiveMode.Create, leaveOpen: true))
                 {
                     foreach (var file in result.files)
                     {
-                        context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
-                        if (!System.IO.File.Exists(file.StoragePath)) continue;
+                        HttpContext.RequestAborted.ThrowIfCancellationRequested();
 
                         var entryName = MakeUniqueName(archive, file.OriginalFileName);
                         var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
                         await using var entryStream = entry.Open();
-                        await using var input = System.IO.File.OpenRead(file.StoragePath);
-                        await input.CopyToAsync(entryStream, 81920, context.HttpContext.RequestAborted);
+                        await using var input = new FileStream(file.StoragePath, FileMode.Open,
+                            FileAccess.Read, FileShare.Read, 81920,
+                            FileOptions.Asynchronous | FileOptions.SequentialScan);
+                        await input.CopyToAsync(entryStream, 81920, HttpContext.RequestAborted);
                     }
                 }
+
+                await zipFile.FlushAsync(HttpContext.RequestAborted);
+            }
+
+            HttpContext.RequestAborted.ThrowIfCancellationRequested();
+        }
+        catch (Exception ex)
+        {
+            if (tempZipPath is not null)
+            {
+                try { System.IO.File.Delete(tempZipPath); }
+                catch (Exception deleteError)
+                {
+                    _logger.LogWarning(deleteError, "Unable to remove failed temporary ZIP.");
+                }
+            }
+
+            await RecordDownloadInterruptedAsync(result.transfer.TransferId, result.transfer.RecipientEmail,
+                detail, remoteIp, ex);
+            throw;
+        }
+
+        // Clean up even if ASP.NET Core never invokes the result callback.
+        var completedZipPath = tempZipPath!;
+        HttpContext.Response.OnCompleted(() =>
+        {
+            try { System.IO.File.Delete(completedZipPath); }
+            catch (Exception deleteError)
+            {
+                _logger.LogWarning(deleteError, "Unable to remove completed temporary ZIP.");
+            }
+            return Task.CompletedTask;
+        });
+
+        return new FileCallbackResult("application/zip", async (output, context) =>
+        {
+            try
+            {
+                await using (var input = new FileStream(completedZipPath, FileMode.Open,
+                    FileAccess.Read, FileShare.Read, 81920,
+                    FileOptions.Asynchronous | FileOptions.SequentialScan))
+                {
+                    context.HttpContext.Response.ContentLength = input.Length;
+                    await input.CopyToAsync(output, 81920, context.HttpContext.RequestAborted);
+                }
+
                 await output.FlushAsync(context.HttpContext.RequestAborted);
                 context.HttpContext.RequestAborted.ThrowIfCancellationRequested();
             }
