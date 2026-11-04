@@ -351,11 +351,12 @@ public sealed class TransferController : Controller
             {
                 using (var archive = new ZipArchive(zipFile, ZipArchiveMode.Create, leaveOpen: true))
                 {
+                    var usedEntryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var file in result.files)
                     {
                         HttpContext.RequestAborted.ThrowIfCancellationRequested();
 
-                        var entryName = MakeUniqueName(archive, file.OriginalFileName);
+                        var entryName = MakeUniqueName(usedEntryNames, file.OriginalFileName);
                         var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
                         await using var entryStream = entry.Open();
                         await using var input = new FileStream(file.StoragePath, FileMode.Open,
@@ -764,20 +765,25 @@ public sealed class TransferController : Controller
             ?? fallbackEmail;
     }
 
-    private static string MakeUniqueName(ZipArchive archive, string fileName)
+    private static string MakeUniqueName(HashSet<string> usedEntryNames, string fileName)
     {
+        // ZipArchive.GetEntry is not supported when the archive is in Create mode.
+        // Track assigned names instead of querying the incomplete archive.
         var clean = string.IsNullOrWhiteSpace(fileName) ? "file.bin" : Path.GetFileName(fileName);
-        if (archive.GetEntry(clean) is null) return clean;
+        if (usedEntryNames.Add(clean)) return clean;
 
         var name = Path.GetFileNameWithoutExtension(clean);
         var ext = Path.GetExtension(clean);
         for (var i = 2; i < 9999; i++)
         {
             var candidate = $"{name} ({i}){ext}";
-            if (archive.GetEntry(candidate) is null) return candidate;
+            if (usedEntryNames.Add(candidate)) return candidate;
         }
 
-        return $"{Guid.NewGuid():N}-{clean}";
+        string fallback;
+        do { fallback = $"{Guid.NewGuid():N}-{clean}"; }
+        while (!usedEntryNames.Add(fallback));
+        return fallback;
     }
 }
 
