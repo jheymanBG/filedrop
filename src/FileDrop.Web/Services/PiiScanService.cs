@@ -109,6 +109,7 @@ public sealed class PiiScanService : IPiiScanService
             var highThreshold = await GetDoubleAsync("Security.PiiScanning.PresidioHighThreshold", 0.85, mediumThreshold, 1.00);
 
             var providerUsed = "BuiltIn";
+            var providerFailed = false;
             List<PiiFindingSummary> findings;
 
             if (providerSetting.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
@@ -143,6 +144,7 @@ public sealed class PiiScanService : IPiiScanService
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    providerFailed = true;
                     _logger.LogWarning(ex, "Presidio PII provider unavailable for {FileName}; fallback={Fallback}", originalFileName, presidioFallback);
 
                     if (presidioFallback.Equals("BuiltIn", StringComparison.OrdinalIgnoreCase))
@@ -193,7 +195,8 @@ public sealed class PiiScanService : IPiiScanService
                 || (hasMedium && mediumAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
                 || (hasLow && lowAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
                 || partial
-                || incompletePdf;
+                || incompletePdf
+                || providerFailed;
 
             var requiresAcknowledgement = !shouldBlock && (
                 (hasMedium && mediumAction.Equals("Warn", StringComparison.OrdinalIgnoreCase))
@@ -213,8 +216,10 @@ public sealed class PiiScanService : IPiiScanService
             var categoriesText = string.Join(", ", findings.Select(x => x.Category).Distinct(StringComparer.OrdinalIgnoreCase));
             if (shouldBlock)
             {
-                message = partial
-                    ? $"File inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
+                message = providerFailed
+                    ? "PII provider encountered an error. File securely held for GIS review; no recipient access granted."
+                    : partial
+                        ? $"File inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
                     : partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
                         ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
                         : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
