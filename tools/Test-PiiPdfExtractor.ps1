@@ -83,7 +83,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using UglyToad.PdfPig;
 
 var path = args[0];
-const int pageLimit = 250;
+const int pageLimit = 1000;
 
 try
 {
@@ -106,6 +106,7 @@ try
     Console.WriteLine($"PII allowed: {result.Allowed}");
     Console.WriteLine($"Extracted characters (no content shown): {result.ExtractedCharacters}");
     Console.WriteLine($"Total uninspected pages/sections: {result.UnsupportedItems}");
+    Console.WriteLine($"Extraction breakdown: {result.Message}");
     Console.WriteLine($"Uninspected within first {pageLimit} pages or due to extraction limit: {Math.Max(0, result.UnsupportedItems - beyondPageLimit)}");
 
     if (result.UnsupportedItems <= 0 || result.Allowed || result.Result != "Blocked")
