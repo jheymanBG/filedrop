@@ -1,6 +1,6 @@
 #requires -Version 5.1
 <#
-Read-only regression test for the missing-font PDF extraction failure.
+Read-only end-to-end PII scanner decision and PDF page-limit regression checks.
 Builds the current source and invokes PiiScanService.ExtractPdf on an already-held
 production PDF without writing extracted text or modifying any application data.
 This does NOT change PII review decisions or deploy to IIS.
@@ -73,45 +73,81 @@ WHERE UploadId = @UploadId
     $testProgram = Join-Path $QaRoot 'Program.cs'
     @'
 using System;
-using System.Reflection;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using FileDrop.Web.Models;
 using FileDrop.Web.Services;
 using Microsoft.Extensions.Logging.Abstractions;
+using UglyToad.PdfPig;
+
+var path = args[0];
+const int pageLimit = 250;
 
 try
 {
-    var path = args[0];
-    // The scanner's extraction stage is invoked directly; no DB writes, PII release,
-    // provider calls, outgoing emails, or extracted text output can occur.
-    var scanner = new PiiScanService(null!, null!, NullLogger<PiiScanService>.Instance);
-    var method = typeof(PiiScanService).GetMethod("ExtractPdf", BindingFlags.Instance | BindingFlags.NonPublic);
-    if (method is null) throw new InvalidOperationException("ExtractPdf method not found.");
-    var outcome = method.Invoke(scanner, new object[] { path, 2_000_000, 250 });
-    if (outcome is null) throw new InvalidOperationException("No extraction result.");
-    var type = outcome.GetType();
-    var incomplete = (int)(type.GetProperty("UnsupportedItems")?.GetValue(outcome) ?? -1);
-    var text = (string)(type.GetProperty("Text")?.GetValue(outcome) ?? "");
-    Console.WriteLine($"Readable characters (never displayed): {text.Length}");
-    Console.WriteLine($"Uninspectable pages/sections: {incomplete}");
-    if (incomplete <= 0)
+    using var document = PdfDocument.Open(path);
+    var pageCount = document.NumberOfPages;
+    var beyondPageLimit = Math.Max(0, pageCount - pageLimit);
+    Console.WriteLine($"PDF total pages: {pageCount}");
+    Console.WriteLine($"Configured test page limit: {pageLimit}");
+    Console.WriteLine($"Pages beyond limit (never inspected): {beyondPageLimit}");
+
+    // Stub settings exercise the real ScanAsync decision path without touching SQL,
+    // invoking Presidio, transmitting contents, or changing PII review records.
+    // Deliberately turn OFF general BlockUnscannable and BlockOnFailure: PDFs must
+    // still fail closed when extraction is incomplete or broken.
+    var settings = new OfflineSettings("BuiltIn");
+    var scanner = new PiiScanService(settings, null!, NullLogger<PiiScanService>.Instance);
+    var result = await scanner.ScanAsync(path, Path.GetFileName(path), CancellationToken.None);
+
+    Console.WriteLine($"PII result: {result.Result}");
+    Console.WriteLine($"PII allowed: {result.Allowed}");
+    Console.WriteLine($"Extracted characters (no content shown): {result.ExtractedCharacters}");
+    Console.WriteLine($"Total uninspected pages/sections: {result.UnsupportedItems}");
+    Console.WriteLine($"Uninspected within first {pageLimit} pages or due to extraction limit: {Math.Max(0, result.UnsupportedItems - beyondPageLimit)}");
+
+    if (result.UnsupportedItems <= 0 || result.Allowed || result.Result != "Blocked")
+        throw new InvalidOperationException("FAIL: Incomplete PDF was not blocked by ScanAsync.");
+    Console.WriteLine("PASS: Incomplete held PDF is blocked despite relaxed generic scanning settings.");
+
+    // Separate synthetic corrupt PDF verifies fail-closed exception handling when
+    // BlockOnFailure=false; synthetic input contains no user document data.
+    var corruptPdf = Path.Combine(Path.GetTempPath(), "filedrop-invalid-pdf-" + Guid.NewGuid().ToString("N") + ".pdf");
+    try
     {
-        Console.WriteLine("FAIL: Missing-font regression was not reproduced as incomplete.");
-        Environment.ExitCode = 2;
+        File.WriteAllText(corruptPdf, "This is not a PDF file.");
+        var badResult = await scanner.ScanAsync(corruptPdf, "invalid.pdf", CancellationToken.None);
+        Console.WriteLine($"Corrupt PDF result: {badResult.Result}; Allowed: {badResult.Allowed}");
+        if (badResult.Allowed || badResult.Result != "Failed")
+            throw new InvalidOperationException("FAIL: Corrupt PDF was allowed.");
+        Console.WriteLine("PASS: Corrupt PDF fails closed with BlockOnFailure=false.");
     }
-    else
-    {
-        Console.WriteLine("PASS: Parser returned partial extraction without crashing.");
-        Console.WriteLine("Important: incomplete PDFs must remain blocked from automatic clearance.");
-    }
-}
-catch (TargetInvocationException ex)
-{
-    Console.WriteLine("FAIL: PDF extraction threw " + (ex.InnerException?.GetType().Name ?? "unknown exception"));
-    Environment.ExitCode = 1;
+    finally { if (File.Exists(corruptPdf)) File.Delete(corruptPdf); }
+
+    Console.WriteLine("PASS: PDF scan decision regression QA complete; no production state changed.");
 }
 catch (Exception ex)
 {
-    Console.WriteLine("FAIL: " + ex.GetType().Name);
+    Console.WriteLine("FAIL: " + ex.GetType().Name + ": PDF regression assertion failed.");
     Environment.ExitCode = 1;
+}
+
+sealed class OfflineSettings : ISettingsRepository
+{
+    private readonly string _provider;
+    public OfflineSettings(string provider) => _provider = provider;
+    public Task<string?> GetValueAsync(string key) => Task.FromResult<string?>(null);
+    public Task<string> GetStringAsync(string key, string fallback)
+        => Task.FromResult(key == "Security.PiiScanning.Provider" ? _provider : fallback);
+    public Task<bool> GetBoolAsync(string key, bool fallback)
+        => Task.FromResult(key is "Security.PiiScanning.BlockUnscannable" or "Security.PiiScanning.BlockOnFailure" ? false : fallback);
+    public Task<int> GetIntAsync(string key, int fallback) => Task.FromResult(fallback);
+    public Task<List<AppSettingRecord>> GetAllAsync() => throw new NotSupportedException("Read-only QA");
+    public Task UpdateAsync(string key, string? value) => throw new NotSupportedException("Read-only QA");
+    public Task UpsertAsync(string key, string? value, string? description = null)
+        => throw new NotSupportedException("Read-only QA");
 }
 '@ | Set-Content -LiteralPath $testProgram -Encoding UTF8
 
