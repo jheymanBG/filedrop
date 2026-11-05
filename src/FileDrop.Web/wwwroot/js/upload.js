@@ -627,6 +627,7 @@
 
         if (session.alreadyComplete || session.status === 'Complete') {
             const inspection = await scanCompletedUpload(session.uploadId, file);
+            if (inspection.pendingPiiReview) return 'pendingReview';
             completedUploadIds.push(session.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
             updateRow(
@@ -666,6 +667,7 @@
             updateRow(file, 99.5, 'Finalizing', 'Merging chunks and verifying SHA256');
             const finalStatus = await completeUpload(session);
             const inspection = await scanCompletedUpload(finalStatus.uploadId, file);
+            if (inspection.pendingPiiReview) return 'pendingReview';
             completedUploadIds.push(finalStatus.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
             updateRow(
@@ -716,10 +718,12 @@
         uploadedIds.value = '';
 
         let nextFile = 0;
+        let pendingReviewCount = 0;
         async function fileWorker() {
             while (nextFile < selectedFiles.length) {
                 const file = selectedFiles[nextFile++];
-                await uploadFile(file);
+                const outcome = await uploadFile(file);
+                if (outcome === 'pendingReview') pendingReviewCount++;
                 uploadedIds.value = completedUploadIds.join(',');
             }
         }
@@ -727,6 +731,15 @@
         try {
             await Promise.all(Array.from({ length: Math.min(maxParallelFiles, selectedFiles.length) }, () => fileWorker()));
             uploadedIds.value = completedUploadIds.join(',');
+
+            if (pendingReviewCount > 0) {
+                uploadButton.textContent = 'Review required before sending';
+                if (uploadSummary) {
+                    uploadSummary.classList.remove('hidden');
+                    uploadSummary.textContent = `${pendingReviewCount} file(s) uploaded and held for GIS review. No transfer or email was sent. Use the Review link shown for each held file.`;
+                }
+                return;
+            }
 
             if (completedUploadIds.length !== selectedFiles.length) {
                 throw new Error(`Upload completed ${completedUploadIds.length} of ${selectedFiles.length} file(s). The transfer was not sent.`);
