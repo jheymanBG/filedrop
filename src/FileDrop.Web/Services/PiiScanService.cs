@@ -214,7 +214,7 @@ public sealed class PiiScanService : IPiiScanService
             if (shouldBlock)
             {
                 message = incompletePdf
-                    ? $"PDF inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared."
+                    ? $"PDF inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
                     : partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
                         ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
                         : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
