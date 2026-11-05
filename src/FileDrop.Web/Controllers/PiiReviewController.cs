@@ -55,7 +55,7 @@ public sealed class PiiReviewController : Controller
             return BadRequest("Acknowledgment and justification (15-2000 characters) are required.");
         if (!await _reviews.IsUploadOwnedByAsync(request.UploadId, email)) return NotFound();
         var scan = await _scans.GetLatestAsync(request.UploadId);
-        if (scan is null || scan.Allowed || !string.Equals(scan.Result, "Blocked", StringComparison.OrdinalIgnoreCase))
+        if (scan is null || scan.Allowed || !IsReviewEligible(scan.Result))
             return BadRequest("Only held uploads with blocked or incomplete PII inspections are eligible for review.");
         if (await _reviews.GetByUploadIdAsync(request.UploadId) is not null)
             return Conflict("A review request already exists for this upload.");
