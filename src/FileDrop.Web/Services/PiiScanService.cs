@@ -84,7 +84,7 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Result = "Failed",
-                    Allowed = !blockOnFailure && !Path.GetExtension(originalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase),
+                    Allowed = false,
                     Message = extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
@@ -95,8 +95,8 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Result = "Unscannable",
-                    Allowed = !blockUnscannable && !incompletePdf,
-                    Message = incompletePdf ? "PDF inspection incomplete; manual review required." : extraction.Message,
+                    Allowed = false,
+                    Message = "File inspection incomplete; manual GIS review required. " + extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
             }
@@ -156,8 +156,8 @@ public sealed class PiiScanService : IPiiScanService
                         {
                             Provider = "PresidioUnavailable",
                             Result = "ProviderUnavailable",
-                            Allowed = !incompletePdf,
-                            Message = incompletePdf ? "PDF inspection incomplete; manual review required." : "Presidio PII inspection was unavailable. Administrator policy allows the upload and the condition was logged.",
+                            Allowed = false,
+                            Message = "PII provider unavailable; file retained for GIS review and not released.",
                             ExtractedCharacters = extraction.Text.Length,
                             UnsupportedItems = extraction.UnsupportedItems
                         };
@@ -192,7 +192,7 @@ public sealed class PiiScanService : IPiiScanService
             var shouldBlock = hasHigh
                 || (hasMedium && mediumAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
                 || (hasLow && lowAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
-                || (partial && blockUnscannable)
+                || partial
                 || incompletePdf;
 
             var requiresAcknowledgement = !shouldBlock && (
@@ -213,8 +213,8 @@ public sealed class PiiScanService : IPiiScanService
             var categoriesText = string.Join(", ", findings.Select(x => x.Category).Distinct(StringComparer.OrdinalIgnoreCase));
             if (shouldBlock)
             {
-                message = incompletePdf
-                    ? $"PDF inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
+                message = partial
+                    ? $"File inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
                     : partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
                         ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
                         : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
@@ -259,7 +259,7 @@ public sealed class PiiScanService : IPiiScanService
             return new PiiScanResult
             {
                 Result = "Failed",
-                Allowed = !blockOnFailure && !Path.GetExtension(originalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase),
+                Allowed = false,
                 Message = "PII inspection failed. No sensitive values were written to the application log."
             };
         }
