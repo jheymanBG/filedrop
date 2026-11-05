@@ -139,6 +139,8 @@ public sealed class UploadProtectionController : Controller
             var piiHardBlock = pii is not null && !pii.Allowed && !pii.RequiresAcknowledgement;
             var allowed = malwareAllowed && (pii?.Allowed ?? true);
             var hardBlock = !malwareAllowed || piiHardBlock;
+            var pendingPiiReview = piiHardBlock && malwareAllowed &&
+                malwareStatus is not ("Infected" or "Quarantined");
 
             if (hardBlock)
             {
@@ -147,15 +149,16 @@ public sealed class UploadProtectionController : Controller
                         ? $"Malware was detected and the upload was blocked ({malwareStatus})."
                         : $"Malware protection could not be verified and policy is configured to block ({malwareStatus})."
                     : $"PII scan blocked upload ({pii?.Result ?? "Unknown"}; confidence={pii?.MaxConfidence ?? "Unknown"}).";
-                if (piiHardBlock && malwareAllowed &&
-                    malwareStatus is not ("Infected" or "Quarantined"))
+                if (pendingPiiReview)
                     await _chunks.HoldForPiiReviewAsync(request.UploadId, cancellationToken);
                 else
                     await _chunks.BlockAsync(request.UploadId, reason, cancellationToken);
             }
 
-            var auditAction = hardBlock
-                ? "Upload Pre-Submit Inspection Blocked"
+            var auditAction = pendingPiiReview
+                ? "Upload Held Pending GIS Review"
+                : hardBlock
+                    ? "Upload Pre-Submit Inspection Blocked"
                 : requiresAck
                     ? "Upload PII Warning Awaiting Acknowledgement"
                     : "Upload Pre-Submit Inspection Passed";
@@ -184,6 +187,8 @@ public sealed class UploadProtectionController : Controller
             }
             if (preSubmitEnabled && piiEnabled && pii is not null)
                 messageParts.Add(pii.Message);
+            if (pendingPiiReview)
+                messageParts.Add("The upload is complete and retained securely, but has not been sent to any recipient. Submit a GIS review request to request release.");
             if (!preSubmitEnabled)
                 messageParts.Add("Pre-submit inspection is disabled by administrator policy.");
             else if (!virusEnabled && !piiEnabled)
@@ -194,7 +199,8 @@ public sealed class UploadProtectionController : Controller
                 UploadId = request.UploadId,
                 Allowed = allowed,
                 RequiresAcknowledgement = requiresAck,
-                Status = hardBlock ? (!malwareAllowed ? malwareStatus : pii?.Result ?? "Blocked") : requiresAck ? "PII Warning" : "Clean",
+                PendingPiiReview = pendingPiiReview,
+                Status = pendingPiiReview ? "Pending GIS Review" : hardBlock ? (!malwareAllowed ? malwareStatus : pii?.Result ?? "Blocked") : requiresAck ? "PII Warning" : "Clean",
                 Message = string.Join(" ", messageParts),
                 ThreatName = threatName,
                 Details = malwareDetails,
