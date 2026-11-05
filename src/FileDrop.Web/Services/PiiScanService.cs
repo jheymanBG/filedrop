@@ -65,8 +65,6 @@ public sealed class PiiScanService : IPiiScanService
             var maxChars = await GetIntAsync("Security.PiiScanning.MaxExtractedCharacters", 2_000_000, 10_000, 10_000_000);
             var maxPdfPages = await GetIntAsync("Security.PiiScanning.MaxPdfPages", 1000, 1, 5000);
             var maxArchiveMb = await GetIntAsync("Security.PiiScanning.MaxArchiveExpandedMB", 100, 1, 2048);
-            var blockOnFailure = await _settings.GetBoolAsync("Security.PiiScanning.BlockOnFailure", true);
-            var blockUnscannable = await _settings.GetBoolAsync("Security.PiiScanning.BlockUnscannable", false);
             var contactInfo = await _settings.GetBoolAsync("Security.PiiScanning.ScanContactInfo", false);
             var sensitivity = NormalizeSensitivity(await _settings.GetStringAsync("Security.PiiScanning.Sensitivity", "Balanced"));
             var lowAction = ResolveAction(sensitivity, "Low", await _settings.GetStringAsync("Security.PiiScanning.LowConfidenceAction", "AllowLog"));
@@ -220,8 +218,6 @@ public sealed class PiiScanService : IPiiScanService
                     ? "PII provider encountered an error. File securely held for GIS review; no recipient access granted."
                     : partial
                         ? $"File inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
-                    : partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
-                        ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
                         : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
             }
             else if (requiresAcknowledgement)
