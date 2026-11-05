@@ -25,6 +25,9 @@ public sealed class PiiReviewController : Controller
     private string? CurrentEmail() => User.FindFirstValue(ClaimTypes.Email)
         ?? User.FindFirstValue("preferred_username") ?? User.Identity?.Name;
 
+    private static bool IsReviewEligible(string? result) =>
+        result is "Blocked" or "Failed" or "Unscannable" or "ProviderUnavailable";
+
     [HttpGet("/Upload/PiiReview/{uploadId:guid}")]
     public async Task<IActionResult> Review(Guid uploadId)
     {
@@ -32,8 +35,8 @@ public sealed class PiiReviewController : Controller
         if (string.IsNullOrWhiteSpace(email) || !await _reviews.IsUploadOwnedByAsync(uploadId, email))
             return NotFound();
         var scan = await _scans.GetLatestAsync(uploadId);
-        if (scan is null || scan.Allowed || !string.Equals(scan.Result, "Blocked", StringComparison.OrdinalIgnoreCase))
-            return BadRequest("This upload is not eligible for high-confidence PII review.");
+        if (scan is null || scan.Allowed || !IsReviewEligible(scan.Result))
+            return BadRequest("This upload is not eligible for PII or inspection-failure review.");
         var pending = await _reviews.GetByUploadIdAsync(uploadId);
         ViewBag.ReviewStatus = pending?.Status;
         return View(new PiiReviewUploadViewModel { UploadId = uploadId, Scan = scan, Findings = await _reviews.GetFindingsAsync(scan.PiiScanId) });
@@ -53,7 +56,7 @@ public sealed class PiiReviewController : Controller
         if (!await _reviews.IsUploadOwnedByAsync(request.UploadId, email)) return NotFound();
         var scan = await _scans.GetLatestAsync(request.UploadId);
         if (scan is null || scan.Allowed || !string.Equals(scan.Result, "Blocked", StringComparison.OrdinalIgnoreCase))
-            return BadRequest("Only blocked PII scans are eligible for review.");
+            return BadRequest("Only held uploads with blocked or incomplete PII inspections are eligible for review.");
         if (await _reviews.GetByUploadIdAsync(request.UploadId) is not null)
             return Conflict("A review request already exists for this upload.");
         long id;
