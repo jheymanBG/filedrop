@@ -63,10 +63,8 @@ public sealed class PiiScanService : IPiiScanService
         try
         {
             var maxChars = await GetIntAsync("Security.PiiScanning.MaxExtractedCharacters", 2_000_000, 10_000, 10_000_000);
-            var maxPdfPages = await GetIntAsync("Security.PiiScanning.MaxPdfPages", 250, 1, 5000);
+            var maxPdfPages = await GetIntAsync("Security.PiiScanning.MaxPdfPages", 1000, 1, 5000);
             var maxArchiveMb = await GetIntAsync("Security.PiiScanning.MaxArchiveExpandedMB", 100, 1, 2048);
-            var blockOnFailure = await _settings.GetBoolAsync("Security.PiiScanning.BlockOnFailure", true);
-            var blockUnscannable = await _settings.GetBoolAsync("Security.PiiScanning.BlockUnscannable", false);
             var contactInfo = await _settings.GetBoolAsync("Security.PiiScanning.ScanContactInfo", false);
             var sensitivity = NormalizeSensitivity(await _settings.GetStringAsync("Security.PiiScanning.Sensitivity", "Balanced"));
             var lowAction = ResolveAction(sensitivity, "Low", await _settings.GetStringAsync("Security.PiiScanning.LowConfidenceAction", "AllowLog"));
@@ -76,13 +74,15 @@ public sealed class PiiScanService : IPiiScanService
                 "SSN,CreditCard,DateOfBirth,BankAccount,Passport"));
 
             var extraction = await ExtractTextAsync(path, originalFileName, maxChars, maxPdfPages, maxArchiveMb, cancellationToken);
+            var incompletePdf = Path.GetExtension(originalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+                && extraction.UnsupportedItems > 0;
 
             if (extraction.Failed)
             {
                 return new PiiScanResult
                 {
                     Result = "Failed",
-                    Allowed = !blockOnFailure,
+                    Allowed = false,
                     Message = extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
@@ -93,8 +93,8 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Result = "Unscannable",
-                    Allowed = !blockUnscannable,
-                    Message = extraction.Message,
+                    Allowed = false,
+                    Message = "File inspection incomplete; manual GIS review required. " + extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
             }
@@ -107,6 +107,7 @@ public sealed class PiiScanService : IPiiScanService
             var highThreshold = await GetDoubleAsync("Security.PiiScanning.PresidioHighThreshold", 0.85, mediumThreshold, 1.00);
 
             var providerUsed = "BuiltIn";
+            var providerFailed = false;
             List<PiiFindingSummary> findings;
 
             if (providerSetting.Equals("Disabled", StringComparison.OrdinalIgnoreCase))
@@ -114,9 +115,9 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Provider = "Disabled",
-                    Result = "Disabled",
-                    Allowed = true,
-                    Message = "PII inspection is disabled by administrator policy.",
+                    Result = incompletePdf ? "Blocked" : "Disabled",
+                    Allowed = !incompletePdf,
+                    Message = incompletePdf ? "PDF inspection incomplete; manual review required." : "PII inspection is disabled by administrator policy.",
                     ExtractedCharacters = extraction.Text.Length,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
@@ -141,6 +142,7 @@ public sealed class PiiScanService : IPiiScanService
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
+                    providerFailed = true;
                     _logger.LogWarning(ex, "Presidio PII provider unavailable for {FileName}; fallback={Fallback}", originalFileName, presidioFallback);
 
                     if (presidioFallback.Equals("BuiltIn", StringComparison.OrdinalIgnoreCase))
@@ -154,8 +156,8 @@ public sealed class PiiScanService : IPiiScanService
                         {
                             Provider = "PresidioUnavailable",
                             Result = "ProviderUnavailable",
-                            Allowed = true,
-                            Message = "Presidio PII inspection was unavailable. Administrator policy allows the upload and the condition was logged.",
+                            Allowed = false,
+                            Message = "PII provider unavailable; file retained for GIS review and not released.",
                             ExtractedCharacters = extraction.Text.Length,
                             UnsupportedItems = extraction.UnsupportedItems
                         };
@@ -190,7 +192,9 @@ public sealed class PiiScanService : IPiiScanService
             var shouldBlock = hasHigh
                 || (hasMedium && mediumAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
                 || (hasLow && lowAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
-                || (partial && blockUnscannable);
+                || partial
+                || incompletePdf
+                || providerFailed;
 
             var requiresAcknowledgement = !shouldBlock && (
                 (hasMedium && mediumAction.Equals("Warn", StringComparison.OrdinalIgnoreCase))
@@ -210,9 +214,11 @@ public sealed class PiiScanService : IPiiScanService
             var categoriesText = string.Join(", ", findings.Select(x => x.Category).Distinct(StringComparer.OrdinalIgnoreCase));
             if (shouldBlock)
             {
-                message = partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
-                    ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
-                    : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
+                message = providerFailed
+                    ? "PII provider encountered an error. File securely held for GIS review; no recipient access granted."
+                    : partial
+                        ? $"File inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared. {extraction.Message}"
+                        : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
             }
             else if (requiresAcknowledgement)
             {
@@ -254,7 +260,7 @@ public sealed class PiiScanService : IPiiScanService
             return new PiiScanResult
             {
                 Result = "Failed",
-                Allowed = !blockOnFailure,
+                Allowed = false,
                 Message = "PII inspection failed. No sensitive values were written to the application log."
             };
         }
@@ -829,27 +835,82 @@ public sealed class PiiScanService : IPiiScanService
         return new ExtractionResult(sb.ToString(), sb.Length > 0 ? "Office document text inspected." : "No extractable Office document text was found.");
     }
 
-    private static ExtractionResult ExtractPdf(string path, int maxChars, int maxPdfPages)
+    private ExtractionResult ExtractPdf(string path, int maxChars, int maxPdfPages)
     {
         var sb = new StringBuilder();
+        var missingFontPages = 0;
+        var noTextPages = 0;
+        var extractionLimitPages = 0;
         using var document = PdfDocument.Open(path);
-        var pages = 0;
-        foreach (var page in document.GetPages())
+
+        var totalPages = document.NumberOfPages;
+        var pagesToInspect = Math.Min(totalPages, maxPdfPages);
+        var pagesBeyondLimit = Math.Max(0, totalPages - maxPdfPages);
+
+        for (var pageNumber = 1; pageNumber <= pagesToInspect; pageNumber++)
         {
-            if (pages >= maxPdfPages || sb.Length >= maxChars) break;
-            pages++;
-            var text = page.Text;
-            if (string.IsNullOrWhiteSpace(text)) continue;
-            sb.AppendLine($"[[FILEDROP_PAGE:{pages}]]");
-            var remaining = maxChars - sb.Length;
-            if (remaining <= 0) break;
-            sb.Append(text.Length <= remaining ? text : text[..remaining]);
-            sb.AppendLine();
+            if (sb.Length >= maxChars)
+            {
+                extractionLimitPages += pagesToInspect - pageNumber + 1;
+                break;
+            }
+
+            try
+            {
+                var text = document.GetPage(pageNumber).Text;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    // Image-only or otherwise nonextractable pages must never be treated as clean.
+                    noTextPages++;
+                    continue;
+                }
+
+                var marker = $"[[FILEDROP_PAGE:{pageNumber}]]";
+                var remaining = maxChars - sb.Length;
+                if (remaining <= marker.Length + 1)
+                {
+                    extractionLimitPages += pagesToInspect - pageNumber + 1;
+                    break;
+                }
+
+                sb.AppendLine(marker);
+                remaining = maxChars - sb.Length;
+                var truncated = text.Length > remaining;
+                sb.Append(truncated ? text[..remaining] : text);
+                if (sb.Length < maxChars) sb.AppendLine();
+
+                if (truncated)
+                {
+                    extractionLimitPages += pagesToInspect - pageNumber + 1;
+                    break;
+                }
+            }
+            catch (InvalidOperationException ex) when (
+                ex.Message.Contains("Could not find the font with name", StringComparison.OrdinalIgnoreCase) &&
+                ex.Message.Contains("resource store", StringComparison.OrdinalIgnoreCase))
+            {
+                // Skip only the affected page. Do not log page content or font values.
+                missingFontPages++;
+                _logger.LogWarning(
+                    "PDF page extraction incomplete: missing font resource. Page={Page}; ErrorType={ErrorType}",
+                    pageNumber, nameof(InvalidOperationException));
+            }
         }
-        return new ExtractionResult(sb.ToString(), sb.Length > 0
-            ? "PDF text layer inspected. Image-only pages require OCR and are not inspected in this release."
-            : "No extractable PDF text was found. The document may be image-only or encrypted.")
-        { UnsupportedItems = sb.Length > 0 ? 0 : 1 };
+
+        var unsupportedPages = missingFontPages + noTextPages + extractionLimitPages + pagesBeyondLimit;
+        var detail =
+            $"MissingFontPages={missingFontPages}; NoExtractableTextPages={noTextPages}; " +
+            $"ExtractionLimitPages={extractionLimitPages}; BeyondPageLimit={pagesBeyondLimit}; " +
+            $"TotalPages={totalPages}; PageLimit={maxPdfPages}.";
+
+        var message = unsupportedPages > 0
+            ? $"PDF text extraction incomplete; {unsupportedPages} page(s) or section(s) were not fully inspected. {detail}"
+            : $"PDF text layer inspected. {detail} Image-only pages require OCR and are not inspected in this release.";
+
+        return new ExtractionResult(sb.ToString(), message)
+        {
+            UnsupportedItems = unsupportedPages
+        };
     }
 
     private static async Task<ExtractionResult> ExtractZipAsync(string path, int maxChars, int maxArchiveMb, CancellationToken cancellationToken)

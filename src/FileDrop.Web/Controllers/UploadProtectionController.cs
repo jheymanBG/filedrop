@@ -49,6 +49,7 @@ public sealed class UploadProtectionController : Controller
     [HttpPost("/Upload/ScanCompleted")]
     public async Task<IActionResult> ScanCompleted([FromBody] ScanCompletedUploadRequest request, CancellationToken cancellationToken)
     {
+        var canHoldOnInspectionException = false;
         try
         {
             var status = await _chunks.GetStatusAsync(request.UploadId);
@@ -77,6 +78,10 @@ public sealed class UploadProtectionController : Controller
                 malwareAllowed = malware.IsAcceptedProtection ||
                     (malware.IsUnavailable && !unavailableBehavior.Equals("Block", StringComparison.OrdinalIgnoreCase));
             }
+
+            // No review fallback for actual malware threats or unverified malware protection.
+            canHoldOnInspectionException = malwareAllowed &&
+                malwareStatus is not ("Infected" or "Quarantined");
 
             PiiScanResult? pii = null;
             if (preSubmitEnabled && piiEnabled)
@@ -139,6 +144,8 @@ public sealed class UploadProtectionController : Controller
             var piiHardBlock = pii is not null && !pii.Allowed && !pii.RequiresAcknowledgement;
             var allowed = malwareAllowed && (pii?.Allowed ?? true);
             var hardBlock = !malwareAllowed || piiHardBlock;
+            var pendingPiiReview = piiHardBlock && malwareAllowed &&
+                malwareStatus is not ("Infected" or "Quarantined");
 
             if (hardBlock)
             {
@@ -147,15 +154,16 @@ public sealed class UploadProtectionController : Controller
                         ? $"Malware was detected and the upload was blocked ({malwareStatus})."
                         : $"Malware protection could not be verified and policy is configured to block ({malwareStatus})."
                     : $"PII scan blocked upload ({pii?.Result ?? "Unknown"}; confidence={pii?.MaxConfidence ?? "Unknown"}).";
-                if (piiHardBlock && malwareAllowed &&
-                    malwareStatus is not ("Infected" or "Quarantined"))
+                if (pendingPiiReview)
                     await _chunks.HoldForPiiReviewAsync(request.UploadId, cancellationToken);
                 else
                     await _chunks.BlockAsync(request.UploadId, reason, cancellationToken);
             }
 
-            var auditAction = hardBlock
-                ? "Upload Pre-Submit Inspection Blocked"
+            var auditAction = pendingPiiReview
+                ? "Upload Held Pending GIS Review"
+                : hardBlock
+                    ? "Upload Pre-Submit Inspection Blocked"
                 : requiresAck
                     ? "Upload PII Warning Awaiting Acknowledgement"
                     : "Upload Pre-Submit Inspection Passed";
@@ -184,6 +192,8 @@ public sealed class UploadProtectionController : Controller
             }
             if (preSubmitEnabled && piiEnabled && pii is not null)
                 messageParts.Add(pii.Message);
+            if (pendingPiiReview)
+                messageParts.Add("The upload is complete and retained securely, but has not been sent to any recipient. Submit a GIS review request to request release.");
             if (!preSubmitEnabled)
                 messageParts.Add("Pre-submit inspection is disabled by administrator policy.");
             else if (!virusEnabled && !piiEnabled)
@@ -194,7 +204,8 @@ public sealed class UploadProtectionController : Controller
                 UploadId = request.UploadId,
                 Allowed = allowed,
                 RequiresAcknowledgement = requiresAck,
-                Status = hardBlock ? (!malwareAllowed ? malwareStatus : pii?.Result ?? "Blocked") : requiresAck ? "PII Warning" : "Clean",
+                PendingPiiReview = pendingPiiReview,
+                Status = pendingPiiReview ? "Pending GIS Review" : hardBlock ? (!malwareAllowed ? malwareStatus : pii?.Result ?? "Blocked") : requiresAck ? "PII Warning" : "Clean",
                 Message = string.Join(" ", messageParts),
                 ThreatName = threatName,
                 Details = malwareDetails,
@@ -210,6 +221,53 @@ public sealed class UploadProtectionController : Controller
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Pre-submit inspection failed for UploadId={UploadId}", request.UploadId);
+            if (canHoldOnInspectionException && !cancellationToken.IsCancellationRequested)
+            {
+                try
+                {
+                    var current = await _chunks.GetStatusAsync(request.UploadId);
+                    if (current is not null && current.Status.Equals("Complete", StringComparison.OrdinalIgnoreCase))
+                    {
+                        await _chunks.HoldForPiiReviewAsync(request.UploadId, cancellationToken);
+                        await _piiRepository.SaveAsync(request.UploadId,
+                            current.OriginalFileName ?? "upload",
+                            new PiiScanResult
+                            {
+                                Result = "Failed",
+                                Allowed = false,
+                                Message = "Inspection processing error; authorized GIS review required."
+                            });
+                        await _audit.WriteAsync(null, User?.Identity?.Name,
+                            "Upload Held Pending GIS Review",
+                            $"UploadId={request.UploadId}; Reason=InspectionProcessingError; No recipient access granted.",
+                            HttpContext.Connection.RemoteIpAddress?.ToString());
+                        return Json(new ScanCompletedUploadResponse
+                        {
+                            UploadId = request.UploadId,
+                            Allowed = false,
+                            PendingPiiReview = true,
+                            Status = "Pending GIS Review",
+                            PiiStatus = "Failed",
+                            MalwareStatus = "NotThreat",
+                            Message = "Upload completed but inspection encountered an error. File securely held for GIS review; no recipient access granted."
+                        });
+                    }
+                }
+                catch (Exception holdError)
+                {
+                    _logger.LogError(holdError, "Unable to complete GIS review hold workflow for UploadId={UploadId}", request.UploadId);
+                    // Do not delete completed files when the review workflow itself is unavailable.
+                    return StatusCode(503, new ScanCompletedUploadResponse
+                    {
+                        UploadId = request.UploadId,
+                        Allowed = false,
+                        Status = "ReviewUnavailable",
+                        Message = "Upload could not be cleared. Contact GIS staff to confirm its review status; no transfer was created."
+                    });
+                }
+            }
+
+            // Actual malware detections and unverified malware protection are never review-bypassed.
             try { await _chunks.BlockAsync(request.UploadId, "Pre-submit inspection failed.", cancellationToken); } catch { }
             return BadRequest(new ScanCompletedUploadResponse { UploadId = request.UploadId, Allowed = false, Status = "Failed", Message = "File inspection failed and the upload was not accepted." });
         }

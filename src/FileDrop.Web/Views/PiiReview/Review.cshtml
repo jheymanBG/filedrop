@@ -1,12 +1,12 @@
 @model FileDrop.Web.Models.PiiReviewUploadViewModel
-@{ ViewData["Title"] = "Review PII Warnings"; }
+@{ ViewData["Title"] = "Request GIS File Review"; }
 <div class="container py-4">
-<h1>Review PII Warnings</h1>
-<p>Review the potential PII detected in your file. If you believe these findings are incorrect, you can submit them to a GIS administrator for review. Your file will remain blocked during the review.</p>
+<h1>Request GIS File Review</h1>
+<p>Your upload has been saved securely but has not been shared with the recipient. If inspection found potential PII, could not read some content, exceeded a scan limit, or failed, you may request GIS administrator review. An authorized reviewer must decide whether the file can be released.</p>
 @if (TempData["Message"] is string message) { <div class="alert alert-info">@message</div> }
 <dl><dt>File</dt><dd>@Model.Scan.OriginalFileName</dd><dt>Categories</dt><dd>@Model.Scan.Categories</dd><dt>Findings</dt><dd>@Model.Scan.FindingCount</dd><dt>Scan result</dt><dd>@Model.Scan.Result</dd></dl>
-<h2 class="h5">Masked findings</h2>
-@if (Model.Findings.Count == 0) { <p>Individual findings are not available for this scan.</p> }
+<h2 class="h5">Masked findings, if available</h2>
+@if (Model.Findings.Count == 0) { <p>No specific PII findings were recorded. A failed or incomplete scan does not mean the file is free of PII.</p> }
 else { <ul> @foreach (var f in Model.Findings) { <li>@f.Category — @f.Confidence confidence; @(f.PageNumber.HasValue ? $"Page {f.PageNumber}" : "Page unavailable"); @f.MaskedEvidence — @f.DetectionReason</li> } </ul> }
 @if (ViewBag.ReviewStatus != null) { <p>Review status: <strong>@ViewBag.ReviewStatus</strong></p> }
 else {
@@ -21,9 +21,9 @@ else {
 <input type="hidden" id="originalExpiration" name="ExpirationDays" value="7" />
 <input type="hidden" id="originalMaximum" name="MaxDownloads" />
 <input type="hidden" id="originalOneTime" name="DisableAfterFirstDownload" value="false" />
-<p id="missingOriginalWarning" class="text-danger" hidden>Original transfer information could not be recovered. Return to New Transfer and resubmit the file before requesting approval.</p>
+<p id="missingOriginalWarning" class="text-danger" hidden>Original recipient information could not be recovered. Contact GIS staff for help with this held upload; do not upload it again unless instructed.</p>
 </div>
-<div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="Acknowledged" value="true" required id="agree" /><label for="agree" class="form-check-label">I have reviewed the flagged information and believe it does not contain restricted personal information. I understand that a GIS administrator must review this request.</label></div>
+<div class="form-check mb-3"><input class="form-check-input" type="checkbox" name="Acknowledged" value="true" required id="agree" /><label for="agree" class="form-check-label">I understand the file has not been cleared for release. I am requesting an authorized GIS administrator to assess the inspection findings or processing failure before any recipient access is granted.</label></div>
 <label for="reason" class="form-label">Explanation (at least 15 characters)</label>
 <textarea id="reason" name="Justification" class="form-control mb-3" minlength="15" maxlength="2000" required rows="4"></textarea>
 <button class="btn btn-primary" type="submit">Submit for GIS review</button>

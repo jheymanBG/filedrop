@@ -413,6 +413,26 @@
             };
         }
 
+        if (!result.allowed && result.pendingPiiReview) {
+            const reviewUrl = `/Upload/PiiReview/${encodeURIComponent(uploadId)}`;
+            updateRow(file, 100, 'Uploaded - Pending GIS Review',
+                'Upload retained securely; no recipient access granted.');
+            showUploadProtectionDialog({
+                allowed: false,
+                acceptingUploads: true,
+                title: 'Uploaded - Pending GIS Review',
+                message: result.message || 'Inspection incomplete. The uploaded file is securely held for GIS review.',
+                contactEmail: 'gisstaff@bgohio.gov',
+                contactDepartment: 'GIS Department',
+                malwareStatus: result.malwareStatus,
+                piiStatus: result.piiStatus,
+                piiReviewUrl: reviewUrl,
+                files: [{ fileName: file.name, allowed: false,
+                    message: 'Retained securely, pending review and approval.' }]
+            });
+            return { ...result, pendingPiiReview: true };
+        }
+
         if (!result.allowed) {
             const piiText = result.piiDetected
                 ? ` Potential PII: ${(result.piiCategories || []).join(', ')}. Maximum confidence: ${result.piiMaxConfidence || 'High'}.`
@@ -607,6 +627,7 @@
 
         if (session.alreadyComplete || session.status === 'Complete') {
             const inspection = await scanCompletedUpload(session.uploadId, file);
+            if (inspection.pendingPiiReview) return 'pendingReview';
             completedUploadIds.push(session.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
             updateRow(
@@ -646,6 +667,7 @@
             updateRow(file, 99.5, 'Finalizing', 'Merging chunks and verifying SHA256');
             const finalStatus = await completeUpload(session);
             const inspection = await scanCompletedUpload(finalStatus.uploadId, file);
+            if (inspection.pendingPiiReview) return 'pendingReview';
             completedUploadIds.push(finalStatus.uploadId);
             uploadedIds.value = completedUploadIds.join(',');
             updateRow(
@@ -696,10 +718,12 @@
         uploadedIds.value = '';
 
         let nextFile = 0;
+        let pendingReviewCount = 0;
         async function fileWorker() {
             while (nextFile < selectedFiles.length) {
                 const file = selectedFiles[nextFile++];
-                await uploadFile(file);
+                const outcome = await uploadFile(file);
+                if (outcome === 'pendingReview') pendingReviewCount++;
                 uploadedIds.value = completedUploadIds.join(',');
             }
         }
@@ -707,6 +731,15 @@
         try {
             await Promise.all(Array.from({ length: Math.min(maxParallelFiles, selectedFiles.length) }, () => fileWorker()));
             uploadedIds.value = completedUploadIds.join(',');
+
+            if (pendingReviewCount > 0) {
+                uploadButton.textContent = 'Review required before sending';
+                if (uploadSummary) {
+                    uploadSummary.classList.remove('hidden');
+                    uploadSummary.textContent = `${pendingReviewCount} file(s) uploaded and held for GIS review. No transfer or email was sent. Use the Review link shown for each held file.`;
+                }
+                return;
+            }
 
             if (completedUploadIds.length !== selectedFiles.length) {
                 throw new Error(`Upload completed ${completedUploadIds.length} of ${selectedFiles.length} file(s). The transfer was not sent.`);
