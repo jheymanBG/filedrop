@@ -84,7 +84,7 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Result = "Failed",
-                    Allowed = !blockOnFailure && !incompletePdf,
+                    Allowed = !blockOnFailure && !Path.GetExtension(originalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase),
                     Message = extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
@@ -116,9 +116,9 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Provider = "Disabled",
-                    Result = "Disabled",
-                    Allowed = true,
-                    Message = "PII inspection is disabled by administrator policy.",
+                    Result = incompletePdf ? "Blocked" : "Disabled",
+                    Allowed = !incompletePdf,
+                    Message = incompletePdf ? "PDF inspection incomplete; manual review required." : "PII inspection is disabled by administrator policy.",
                     ExtractedCharacters = extraction.Text.Length,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
@@ -259,7 +259,7 @@ public sealed class PiiScanService : IPiiScanService
             return new PiiScanResult
             {
                 Result = "Failed",
-                Allowed = !blockOnFailure,
+                Allowed = !blockOnFailure && !Path.GetExtension(originalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase),
                 Message = "PII inspection failed. No sensitive values were written to the application log."
             };
         }
