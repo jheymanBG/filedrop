@@ -127,6 +127,19 @@ try
     }
     finally { if (File.Exists(corruptPdf)) File.Delete(corruptPdf); }
 
+    // Unsupported file types must be retained for review, never silently cleared.
+    var unsupported = Path.Combine(Path.GetTempPath(), "filedrop-unsupported-" + Guid.NewGuid().ToString("N") + ".unknown");
+    try
+    {
+        File.WriteAllText(unsupported, "Synthetic unsupported-file regression");
+        var unknownResult = await scanner.ScanAsync(unsupported, "sample.unknown", CancellationToken.None);
+        Console.WriteLine($"Unsupported file result: {unknownResult.Result}; Allowed: {unknownResult.Allowed}");
+        if (unknownResult.Allowed || unknownResult.Result != "Unscannable")
+            throw new InvalidOperationException("FAIL: Unsupported file type was allowed.");
+        Console.WriteLine("PASS: Unsupported file types require review.");
+    }
+    finally { if (File.Exists(unsupported)) File.Delete(unsupported); }
+
     Console.WriteLine("PASS: PDF scan decision regression QA complete; no production state changed.");
 }
 catch (Exception ex)
