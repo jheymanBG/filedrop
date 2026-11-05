@@ -413,6 +413,26 @@
             };
         }
 
+        if (!result.allowed && result.pendingPiiReview) {
+            const reviewUrl = `/Upload/PiiReview/${encodeURIComponent(uploadId)}`;
+            updateRow(file, 100, 'Uploaded - Pending GIS Review',
+                'Upload retained securely; no recipient access granted.');
+            showUploadProtectionDialog({
+                allowed: false,
+                acceptingUploads: true,
+                title: 'Uploaded - Pending GIS Review',
+                message: result.message || 'Inspection incomplete. The uploaded file is securely held for GIS review.',
+                contactEmail: 'gisstaff@bgohio.gov',
+                contactDepartment: 'GIS Department',
+                malwareStatus: result.malwareStatus,
+                piiStatus: result.piiStatus,
+                piiReviewUrl: reviewUrl,
+                files: [{ fileName: file.name, allowed: false,
+                    message: 'Retained securely, pending review and approval.' }]
+            });
+            return { ...result, pendingPiiReview: true };
+        }
+
         if (!result.allowed) {
             const piiText = result.piiDetected
                 ? ` Potential PII: ${(result.piiCategories || []).join(', ')}. Maximum confidence: ${result.piiMaxConfidence || 'High'}.`
