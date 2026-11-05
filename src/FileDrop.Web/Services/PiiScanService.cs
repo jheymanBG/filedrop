@@ -76,13 +76,15 @@ public sealed class PiiScanService : IPiiScanService
                 "SSN,CreditCard,DateOfBirth,BankAccount,Passport"));
 
             var extraction = await ExtractTextAsync(path, originalFileName, maxChars, maxPdfPages, maxArchiveMb, cancellationToken);
+            var incompletePdf = Path.GetExtension(originalFileName).Equals(".pdf", StringComparison.OrdinalIgnoreCase)
+                && extraction.UnsupportedItems > 0;
 
             if (extraction.Failed)
             {
                 return new PiiScanResult
                 {
                     Result = "Failed",
-                    Allowed = !blockOnFailure,
+                    Allowed = !blockOnFailure && !incompletePdf,
                     Message = extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
@@ -93,8 +95,8 @@ public sealed class PiiScanService : IPiiScanService
                 return new PiiScanResult
                 {
                     Result = "Unscannable",
-                    Allowed = !blockUnscannable,
-                    Message = extraction.Message,
+                    Allowed = !blockUnscannable && !incompletePdf,
+                    Message = incompletePdf ? "PDF inspection incomplete; manual review required." : extraction.Message,
                     UnsupportedItems = extraction.UnsupportedItems
                 };
             }
@@ -154,8 +156,8 @@ public sealed class PiiScanService : IPiiScanService
                         {
                             Provider = "PresidioUnavailable",
                             Result = "ProviderUnavailable",
-                            Allowed = true,
-                            Message = "Presidio PII inspection was unavailable. Administrator policy allows the upload and the condition was logged.",
+                            Allowed = !incompletePdf,
+                            Message = incompletePdf ? "PDF inspection incomplete; manual review required." : "Presidio PII inspection was unavailable. Administrator policy allows the upload and the condition was logged.",
                             ExtractedCharacters = extraction.Text.Length,
                             UnsupportedItems = extraction.UnsupportedItems
                         };
@@ -190,7 +192,8 @@ public sealed class PiiScanService : IPiiScanService
             var shouldBlock = hasHigh
                 || (hasMedium && mediumAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
                 || (hasLow && lowAction.Equals("Block", StringComparison.OrdinalIgnoreCase))
-                || (partial && blockUnscannable);
+                || (partial && blockUnscannable)
+                || incompletePdf;
 
             var requiresAcknowledgement = !shouldBlock && (
                 (hasMedium && mediumAction.Equals("Warn", StringComparison.OrdinalIgnoreCase))
@@ -210,9 +213,11 @@ public sealed class PiiScanService : IPiiScanService
             var categoriesText = string.Join(", ", findings.Select(x => x.Category).Distinct(StringComparer.OrdinalIgnoreCase));
             if (shouldBlock)
             {
-                message = partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
-                    ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
-                    : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
+                message = incompletePdf
+                    ? $"PDF inspection incomplete: {extraction.UnsupportedItems} page(s) or section(s) could not be inspected. Manual review required; the file was not cleared."
+                    : partial && blockUnscannable && !hasHigh && !hasMedium && !hasLow
+                        ? "PII inspection could not inspect all content and policy is configured to block unscannable content."
+                        : $"PII was detected at a confidence level configured to block ({categoriesText}). This file is blocked by policy.";
             }
             else if (requiresAcknowledgement)
             {
@@ -829,27 +834,75 @@ public sealed class PiiScanService : IPiiScanService
         return new ExtractionResult(sb.ToString(), sb.Length > 0 ? "Office document text inspected." : "No extractable Office document text was found.");
     }
 
-    private static ExtractionResult ExtractPdf(string path, int maxChars, int maxPdfPages)
+    private ExtractionResult ExtractPdf(string path, int maxChars, int maxPdfPages)
     {
         var sb = new StringBuilder();
+        var unsupportedPages = 0;
         using var document = PdfDocument.Open(path);
-        var pages = 0;
-        foreach (var page in document.GetPages())
+
+        var totalPages = document.NumberOfPages;
+        var pagesToInspect = Math.Min(totalPages, maxPdfPages);
+
+        for (var pageNumber = 1; pageNumber <= pagesToInspect; pageNumber++)
         {
-            if (pages >= maxPdfPages || sb.Length >= maxChars) break;
-            pages++;
-            var text = page.Text;
-            if (string.IsNullOrWhiteSpace(text)) continue;
-            sb.AppendLine($"[[FILEDROP_PAGE:{pages}]]");
-            var remaining = maxChars - sb.Length;
-            if (remaining <= 0) break;
-            sb.Append(text.Length <= remaining ? text : text[..remaining]);
-            sb.AppendLine();
+            if (sb.Length >= maxChars)
+            {
+                unsupportedPages += pagesToInspect - pageNumber + 1;
+                break;
+            }
+
+            try
+            {
+                var text = document.GetPage(pageNumber).Text;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    // A page with no extractable text is not necessarily a clean page.
+                    unsupportedPages++;
+                    continue;
+                }
+
+                var marker = $"[[FILEDROP_PAGE:{pageNumber}]]";
+                var remaining = maxChars - sb.Length;
+                if (remaining <= marker.Length + 1)
+                {
+                    unsupportedPages += pagesToInspect - pageNumber + 1;
+                    break;
+                }
+
+                sb.AppendLine(marker);
+                remaining = maxChars - sb.Length;
+                var truncated = text.Length > remaining;
+                sb.Append(truncated ? text[..remaining] : text);
+                if (sb.Length < maxChars) sb.AppendLine();
+                if (truncated)
+                {
+                    unsupportedPages += pagesToInspect - pageNumber;
+                    unsupportedPages++; // This page was not fully inspected.
+                    break;
+                }
+            }
+            catch (InvalidOperationException ex) when (
+                ex.Message.Contains("Could not find the font with name", StringComparison.OrdinalIgnoreCase) &&
+                ex.Message.Contains("resource store", StringComparison.OrdinalIgnoreCase))
+            {
+                // Malformed/missing font resources can affect one page without making the
+                // rest of the document unreadable. Never log extracted page content.
+                unsupportedPages++;
+                _logger.LogWarning("PDF page text extraction skipped due to missing font resource. Page={Page}; ErrorType={ErrorType}",
+                    pageNumber, nameof(InvalidOperationException));
+            }
         }
-        return new ExtractionResult(sb.ToString(), sb.Length > 0
-            ? "PDF text layer inspected. Image-only pages require OCR and are not inspected in this release."
-            : "No extractable PDF text was found. The document may be image-only or encrypted.")
-        { UnsupportedItems = sb.Length > 0 ? 0 : 1 };
+
+        unsupportedPages += Math.Max(0, totalPages - maxPdfPages);
+
+        var message = unsupportedPages > 0
+            ? $"PDF text extraction incomplete; {unsupportedPages} page(s) or section(s) could not be fully inspected."
+            : "PDF text layer inspected. Image-only pages require OCR and are not inspected in this release.";
+
+        return new ExtractionResult(sb.ToString(), message)
+        {
+            UnsupportedItems = unsupportedPages
+        };
     }
 
     private static async Task<ExtractionResult> ExtractZipAsync(string path, int maxChars, int maxArchiveMb, CancellationToken cancellationToken)
