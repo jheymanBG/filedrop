@@ -16,7 +16,7 @@ $Db = $null
 try {
     if (-not (Test-Path -LiteralPath $Project)) { throw 'Source project not found.' }
     Write-Host '=== PDF PII EXTRACTION REGRESSION QA ===' -ForegroundColor Cyan
-    $branch = (& git -C (Split-Path (Split-Path $PSScriptRoot -Parent) -Parent) branch --show-current)
+    $branch = (& git -C (Split-Path $PSScriptRoot -Parent) branch --show-current)
     # Branch is displayed only for reference; the invoking script checks the commit.
     Write-Host ('Source branch: ' + ($branch -join '').Trim())
 
@@ -126,7 +126,5 @@ catch (Exception ex)
 }
 finally {
     if ($Db) { $Db.Dispose() }
-    if (Test-Path -LiteralPath $QaRoot) {
-        Remove-Item -LiteralPath $QaRoot -Recurse -Force
-    }
+    Write-Host ('QA harness retained at: ' + $QaRoot)
 }
