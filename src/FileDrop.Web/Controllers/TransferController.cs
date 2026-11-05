@@ -627,7 +627,7 @@ public sealed class TransferController : Controller
         {
             if (!existing.Allowed)
             {
-                await _chunkedUploads.BlockAsync(uploadId, "PII policy blocked transfer creation.", cancellationToken);
+                await KeepUploadPendingPiiReviewAsync(uploadId, cancellationToken);
                 throw new InvalidOperationException($"{originalFileName} was blocked because the PII inspection did not pass.");
             }
             return;
@@ -637,10 +637,20 @@ public sealed class TransferController : Controller
         await _piiScanRepo.SaveAsync(uploadId, originalFileName, result);
         if (!result.Allowed)
         {
-            await _chunkedUploads.BlockAsync(uploadId, "PII policy blocked transfer creation.", cancellationToken);
+            await KeepUploadPendingPiiReviewAsync(uploadId, cancellationToken);
             await _audit.WriteAsync(null, User?.Identity?.Name, "PII Inspection Blocked Transfer", $"UploadId={uploadId}; File={originalFileName}; Result={result.Result}; Findings={result.FindingCount}; Categories={result.Categories}", HttpContext.Connection.RemoteIpAddress?.ToString());
             throw new InvalidOperationException($"{originalFileName} was blocked because potential PII was detected or the PII inspection failed.");
         }
+    }
+
+    private async Task KeepUploadPendingPiiReviewAsync(Guid uploadId, CancellationToken cancellationToken)
+    {
+        var status = await _chunkedUploads.GetStatusAsync(uploadId);
+        if (status is null) throw new InvalidOperationException("Upload not found; transfer cannot be created.");
+        if (status.Status.Equals("Complete", StringComparison.OrdinalIgnoreCase))
+            await _chunkedUploads.HoldForPiiReviewAsync(uploadId, cancellationToken);
+        else if (!status.Status.Equals("PendingPIIReview", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Upload is not eligible for GIS review or transfer creation.");
     }
 
     private async Task EnforceDirectFilePiiPolicyAsync(string originalFileName, string storagePath, CancellationToken cancellationToken)
