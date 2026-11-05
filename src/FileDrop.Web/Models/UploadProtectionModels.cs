@@ -52,6 +52,7 @@ public sealed class ScanCompletedUploadResponse
     public Guid UploadId { get; set; }
     public bool Allowed { get; set; }
     public bool RequiresAcknowledgement { get; set; }
+    public bool PendingPiiReview { get; set; }
     public string Status { get; set; } = "Unknown";
     public string Message { get; set; } = "";
     public string? ThreatName { get; set; }
