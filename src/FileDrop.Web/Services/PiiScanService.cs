@@ -63,7 +63,7 @@ public sealed class PiiScanService : IPiiScanService
         try
         {
             var maxChars = await GetIntAsync("Security.PiiScanning.MaxExtractedCharacters", 2_000_000, 10_000, 10_000_000);
-            var maxPdfPages = await GetIntAsync("Security.PiiScanning.MaxPdfPages", 250, 1, 5000);
+            var maxPdfPages = await GetIntAsync("Security.PiiScanning.MaxPdfPages", 1000, 1, 5000);
             var maxArchiveMb = await GetIntAsync("Security.PiiScanning.MaxArchiveExpandedMB", 100, 1, 2048);
             var blockOnFailure = await _settings.GetBoolAsync("Security.PiiScanning.BlockOnFailure", true);
             var blockUnscannable = await _settings.GetBoolAsync("Security.PiiScanning.BlockUnscannable", false);
@@ -837,17 +837,20 @@ public sealed class PiiScanService : IPiiScanService
     private ExtractionResult ExtractPdf(string path, int maxChars, int maxPdfPages)
     {
         var sb = new StringBuilder();
-        var unsupportedPages = 0;
+        var missingFontPages = 0;
+        var noTextPages = 0;
+        var extractionLimitPages = 0;
         using var document = PdfDocument.Open(path);
 
         var totalPages = document.NumberOfPages;
         var pagesToInspect = Math.Min(totalPages, maxPdfPages);
+        var pagesBeyondLimit = Math.Max(0, totalPages - maxPdfPages);
 
         for (var pageNumber = 1; pageNumber <= pagesToInspect; pageNumber++)
         {
             if (sb.Length >= maxChars)
             {
-                unsupportedPages += pagesToInspect - pageNumber + 1;
+                extractionLimitPages += pagesToInspect - pageNumber + 1;
                 break;
             }
 
@@ -856,8 +859,8 @@ public sealed class PiiScanService : IPiiScanService
                 var text = document.GetPage(pageNumber).Text;
                 if (string.IsNullOrWhiteSpace(text))
                 {
-                    // A page with no extractable text is not necessarily a clean page.
-                    unsupportedPages++;
+                    // Image-only or otherwise nonextractable pages must never be treated as clean.
+                    noTextPages++;
                     continue;
                 }
 
@@ -865,7 +868,7 @@ public sealed class PiiScanService : IPiiScanService
                 var remaining = maxChars - sb.Length;
                 if (remaining <= marker.Length + 1)
                 {
-                    unsupportedPages += pagesToInspect - pageNumber + 1;
+                    extractionLimitPages += pagesToInspect - pageNumber + 1;
                     break;
                 }
 
@@ -874,10 +877,10 @@ public sealed class PiiScanService : IPiiScanService
                 var truncated = text.Length > remaining;
                 sb.Append(truncated ? text[..remaining] : text);
                 if (sb.Length < maxChars) sb.AppendLine();
+
                 if (truncated)
                 {
-                    unsupportedPages += pagesToInspect - pageNumber;
-                    unsupportedPages++; // This page was not fully inspected.
+                    extractionLimitPages += pagesToInspect - pageNumber + 1;
                     break;
                 }
             }
@@ -885,19 +888,23 @@ public sealed class PiiScanService : IPiiScanService
                 ex.Message.Contains("Could not find the font with name", StringComparison.OrdinalIgnoreCase) &&
                 ex.Message.Contains("resource store", StringComparison.OrdinalIgnoreCase))
             {
-                // Malformed/missing font resources can affect one page without making the
-                // rest of the document unreadable. Never log extracted page content.
-                unsupportedPages++;
-                _logger.LogWarning("PDF page text extraction skipped due to missing font resource. Page={Page}; ErrorType={ErrorType}",
+                // Skip only the affected page. Do not log page content or font values.
+                missingFontPages++;
+                _logger.LogWarning(
+                    "PDF page extraction incomplete: missing font resource. Page={Page}; ErrorType={ErrorType}",
                     pageNumber, nameof(InvalidOperationException));
             }
         }
 
-        unsupportedPages += Math.Max(0, totalPages - maxPdfPages);
+        var unsupportedPages = missingFontPages + noTextPages + extractionLimitPages + pagesBeyondLimit;
+        var detail =
+            $"MissingFontPages={missingFontPages}; NoExtractableTextPages={noTextPages}; " +
+            $"ExtractionLimitPages={extractionLimitPages}; BeyondPageLimit={pagesBeyondLimit}; " +
+            $"TotalPages={totalPages}; PageLimit={maxPdfPages}.";
 
         var message = unsupportedPages > 0
-            ? $"PDF text extraction incomplete; {unsupportedPages} page(s) or section(s) could not be fully inspected."
-            : "PDF text layer inspected. Image-only pages require OCR and are not inspected in this release.";
+            ? $"PDF text extraction incomplete; {unsupportedPages} page(s) or section(s) were not fully inspected. {detail}"
+            : $"PDF text layer inspected. {detail} Image-only pages require OCR and are not inspected in this release.";
 
         return new ExtractionResult(sb.ToString(), message)
         {
