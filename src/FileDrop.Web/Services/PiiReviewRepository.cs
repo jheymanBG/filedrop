@@ -86,7 +86,7 @@ public sealed class PiiReviewRepository
             WHERE EXISTS (
                 SELECT 1 FROM dbo.UploadPiiScans
                 WHERE PiiScanId = @piiScanId AND UploadId = @uploadId AND Allowed = 0
-                  AND Result = 'Blocked'
+                  AND Result IN ('Blocked','Failed','Unscannable','ProviderUnavailable')
             ) AND NOT EXISTS (SELECT 1 FROM dbo.PiiReviewRequests WHERE UploadId = @uploadId)
             """, new { uploadId, piiScanId, requestedBy, justification = justification.Trim(), recipientEmail = recipientEmail.Trim() });
     }
